@@ -1,0 +1,12 @@
+version: "1"
+name: "default"
+waves:
+  - wave: 1
+    roles: [sde1, ba]
+    parallel: true
+  - wave: 2
+    roles: [sde2, devops]
+    parallel: true
+  - wave: 3
+    roles: [qa]
+    parallel: false
