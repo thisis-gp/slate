@@ -1,81 +1,124 @@
 import aiosqlite
 
 DDL = """
+CREATE TABLE IF NOT EXISTS projects (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    updated_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS sprints (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id),
+    name        TEXT NOT NULL,
+    goal        TEXT,
+    start_date  TEXT,
+    end_date    TEXT,
+    status      TEXT NOT NULL DEFAULT 'planning',
+    created_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    prompt TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL REFERENCES projects(id),
+    parent_task_id TEXT REFERENCES tasks(id),
+    sprint_id      TEXT REFERENCES sprints(id),
+    title          TEXT NOT NULL,
+    description    TEXT,
+    type           TEXT NOT NULL DEFAULT 'feature',
+    state          TEXT NOT NULL DEFAULT 'todo',
+    priority       TEXT NOT NULL DEFAULT 'medium',
+    created_by     TEXT NOT NULL DEFAULT 'human',
+    assigned_to    TEXT,
+    created_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    updated_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS state_transitions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL REFERENCES tasks(id),
+    from_state TEXT,
+    to_state   TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    reason     TEXT,
+    ts         REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id            TEXT PRIMARY KEY,
+    agent_name    TEXT NOT NULL,
+    tool          TEXT,
+    project_id    TEXT REFERENCES projects(id),
+    date          TEXT NOT NULL,
+    started_at    REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    ended_at      REAL,
+    summary       TEXT,
+    total_cost_usd REAL NOT NULL DEFAULT 0.0
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id           TEXT PRIMARY KEY,
+    task_id      TEXT NOT NULL REFERENCES tasks(id),
+    session_id   TEXT REFERENCES sessions(id),
+    agent_name   TEXT NOT NULL,
+    tool         TEXT NOT NULL,
+    summary      TEXT NOT NULL,
+    outcome      TEXT,
+    status       TEXT NOT NULL DEFAULT 'completed',
+    started_at   REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
     completed_at REAL,
-    cost_usd REAL DEFAULT 0.0,
-    wave_count INTEGER DEFAULT 0,
-    metadata TEXT
+    cost_usd     REAL NOT NULL DEFAULT 0.0
 );
 
-CREATE TABLE IF NOT EXISTS agents (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id),
-    role TEXT NOT NULL,
-    model TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'idle',
-    wave INTEGER NOT NULL DEFAULT 1,
-    assignment TEXT,
-    output TEXT,
-    cost_usd REAL DEFAULT 0.0,
-    started_at REAL,
-    completed_at REAL,
-    confidence_score REAL,
-    worktree_path TEXT
+CREATE TABLE IF NOT EXISTS model_usage (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_run_id      TEXT REFERENCES agent_runs(id),
+    session_id        TEXT REFERENCES sessions(id),
+    task_id           TEXT REFERENCES tasks(id),
+    model             TEXT NOT NULL,
+    provider          TEXT NOT NULL,
+    input_tokens      INTEGER NOT NULL DEFAULT 0,
+    output_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd          REAL NOT NULL DEFAULT 0.0,
+    ts                REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
-CREATE TABLE IF NOT EXISTS cost_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id TEXT REFERENCES agents(id),
-    task_id TEXT REFERENCES tasks(id),
-    model TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    cache_read_tokens INTEGER DEFAULT 0,
-    cost_usd REAL NOT NULL,
-    ts REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+CREATE TABLE IF NOT EXISTS comments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     TEXT NOT NULL REFERENCES tasks(id),
+    author      TEXT NOT NULL,
+    author_type TEXT NOT NULL DEFAULT 'human',
+    body        TEXT NOT NULL,
+    ts          REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_agent TEXT NOT NULL,
-    to_agent TEXT,
-    task_id TEXT NOT NULL REFERENCES tasks(id),
-    type TEXT NOT NULL,
-    body TEXT NOT NULL,
-    ts REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
-    read INTEGER NOT NULL DEFAULT 0
+CREATE TABLE IF NOT EXISTS approvals (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT REFERENCES tasks(id),
+    requested_by  TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    context       TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    response_note TEXT,
+    requested_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    responded_at  REAL
 );
 
-CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,
-    agent_id TEXT,
-    task_id TEXT,
-    payload TEXT NOT NULL,
-    hash TEXT NOT NULL,
-    ts REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
-);
-
-CREATE TABLE IF NOT EXISTS reflexion (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT REFERENCES tasks(id),
-    role TEXT NOT NULL,
-    attempted TEXT NOT NULL,
-    failed_because TEXT NOT NULL,
-    correct_approach TEXT NOT NULL,
-    ts REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_agents_task ON agents(task_id);
-CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id);
-CREATE INDEX IF NOT EXISTS idx_cost_task ON cost_events(task_id);
-CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
+CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent     ON tasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_runs_task        ON agent_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_runs_session     ON agent_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent   ON sessions(agent_name);
+CREATE INDEX IF NOT EXISTS idx_transitions_task ON state_transitions(task_id);
+CREATE INDEX IF NOT EXISTS idx_model_usage_run  ON model_usage(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 """
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:
