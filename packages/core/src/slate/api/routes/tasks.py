@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from agentic_os.db.queries import insert_task, get_task
+from slate.db.queries import insert_task, get_task
 
 router = APIRouter()
 

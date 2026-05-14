@@ -1,8 +1,8 @@
 import pytest
 import pytest_asyncio
 import aiosqlite
-from agentic_os.db.schema import apply_schema
-from agentic_os.db.queries import (
+from slate.db.schema import apply_schema
+from slate.db.queries import (
     insert_task, get_task, update_task_status,
     insert_agent, get_agents_for_task,
     insert_cost_event, get_daily_cost,

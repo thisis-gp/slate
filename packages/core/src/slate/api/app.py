@@ -4,13 +4,12 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from agentic_os.db.schema import apply_schema
-from agentic_os.api.routes.health import router as health_router
-from agentic_os.api.routes.tasks import router as tasks_router
-from agentic_os.api.routes.costs import router as costs_router
+from slate.db.schema import apply_schema
+from slate.api.routes.health import router as health_router
+from slate.api.routes.tasks import router as tasks_router
 
 
-def create_app(db_path: str = "~/.agentic-os/db.sqlite") -> FastAPI:
+def create_app(db_path: str = "~/.slate/db.sqlite") -> FastAPI:
     resolved = os.path.expanduser(db_path)
     dir_part = os.path.dirname(resolved)
     if dir_part:
@@ -33,5 +32,4 @@ def create_app(db_path: str = "~/.agentic-os/db.sqlite") -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(tasks_router)
-    app.include_router(costs_router)
     return app

@@ -2,7 +2,7 @@ import pytest
 import pytest_asyncio
 from contextlib import asynccontextmanager
 from httpx import AsyncClient, ASGITransport
-from agentic_os.api.app import create_app
+from slate.api.app import create_app
 
 
 @pytest_asyncio.fixture

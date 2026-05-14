@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from agentic_os import __version__
+from slate import __version__
 
 router = APIRouter()
 
