@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "slate": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:/Users/am400/Desktop/Projects/slate/packages/core",
+        "slate-mcp"
+      ]
+    }
+  }
+}
