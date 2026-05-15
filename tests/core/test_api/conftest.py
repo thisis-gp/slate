@@ -1,17 +1,17 @@
 import pytest
-import pytest_asyncio
-from contextlib import asynccontextmanager
+import aiosqlite
 from httpx import AsyncClient, ASGITransport
 from slate.api.app import create_app
+from slate.db.schema import apply_schema
 
-
-@pytest_asyncio.fixture
-async def client(tmp_path):
-    """Test client with proper lifespan management for FastAPI app."""
-    app = create_app(db_path=str(tmp_path / "test.sqlite"))
-
-    # Get the lifespan context manager from the app
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            yield ac
+@pytest.fixture
+async def client():
+    app = create_app()
+    async with aiosqlite.connect(":memory:") as db:
+        db.row_factory = aiosqlite.Row
+        await apply_schema(db)
+        app.state.db = db
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            yield c
