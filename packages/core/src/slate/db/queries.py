@@ -186,18 +186,19 @@ async def end_session(db: aiosqlite.Connection, *, session_id: str,
 async def insert_agent_run(db: aiosqlite.Connection, *, id: str, task_id: str,
                             agent_name: str, tool: str, summary: str,
                             session_id: str = "", outcome: str = "",
-                            status: str = "completed",
-                            cost_usd: float = 0.0) -> None:
+                            status: str = "completed", cost_usd: float = 0.0,
+                            commit_sha: str = "", commit_message: str = "") -> None:
     now = time.time()
     # Resolve short ID prefix or ticket ID to full UUID
     task = await get_task(db, task_id)
     full_task_id = task["id"] if task else task_id
     await db.execute(
         "INSERT INTO agent_runs (id, task_id, session_id, agent_name, tool, summary, "
-        "outcome, status, started_at, completed_at, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "outcome, status, commit_sha, commit_message, started_at, completed_at, cost_usd) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (id, full_task_id, session_id or None, agent_name, tool, summary,
-         outcome or None, status, now, now, cost_usd),
+         outcome or None, status, commit_sha or None, commit_message or None,
+         now, now, cost_usd),
     )
     await db.commit()
 

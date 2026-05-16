@@ -39,13 +39,16 @@ async def update_task_state(db: aiosqlite.Connection, *, task_id: str,
 async def log_agent_run(db: aiosqlite.Connection, *, task_id: str, agent_name: str,
                          tool: str, summary: str, outcome: str = "",
                          status: str = "completed", cost_usd: float = 0.0,
-                         session_id: str = "") -> dict:
+                         session_id: str = "", commit_sha: str = "",
+                         commit_message: str = "") -> dict:
     rid = str(uuid.uuid4())
     await q.insert_agent_run(db, id=rid, task_id=task_id, agent_name=agent_name,
                               tool=tool, summary=summary, outcome=outcome,
-                              status=status, cost_usd=cost_usd, session_id=session_id)
+                              status=status, cost_usd=cost_usd, session_id=session_id,
+                              commit_sha=commit_sha, commit_message=commit_message)
     return {"id": rid, "task_id": task_id, "agent_name": agent_name,
-            "tool": tool, "summary": summary, "status": status}
+            "tool": tool, "summary": summary, "status": status,
+            "commit_sha": commit_sha or None}
 
 
 async def get_task_context(db: aiosqlite.Connection, task_id: str) -> dict:

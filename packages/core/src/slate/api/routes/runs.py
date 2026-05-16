@@ -15,6 +15,8 @@ class LogRunRequest(BaseModel):
     status: str = "completed"
     cost_usd: float = 0.0
     session_id: str = ""
+    commit_sha: str = ""
+    commit_message: str = ""
 
 @router.post("/runs", status_code=201)
 async def log_run(body: LogRunRequest, request: Request):

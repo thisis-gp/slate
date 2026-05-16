@@ -137,6 +137,17 @@ export default function TaskDetail() {
             </div>
             <p className="text-sm text-gray-300">{r.summary}</p>
             {r.outcome && <p className="text-xs text-gray-500 mt-1 italic">{r.outcome}</p>}
+            {r.commit_sha && (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <span className="text-xs text-gray-600">commit</span>
+                <code className="text-xs bg-gray-800 text-green-400 px-1.5 py-0.5 rounded font-mono">
+                  {r.commit_sha.slice(0, 8)}
+                </code>
+                {r.commit_message && (
+                  <span className="text-xs text-gray-500 truncate max-w-xs">{r.commit_message}</span>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </section>

@@ -25,6 +25,8 @@ def log_run(
     cost: float = typer.Option(0.0, "--cost", "-c"),
     session: str = typer.Option("", "--session", "-s"),
     status: str = typer.Option("completed", "--status"),
+    commit: str = typer.Option("", "--commit", help="Git commit SHA"),
+    commit_msg: str = typer.Option("", "--commit-msg", help="Git commit message"),
 ):
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
@@ -33,6 +35,8 @@ def log_run(
             rid = str(uuid.uuid4())
             await insert_agent_run(db, id=rid, task_id=task_id, agent_name=agent,
                                    tool=tool, summary=summary, outcome=outcome,
-                                   status=status, cost_usd=cost, session_id=session)
-            console.print(f"[green]Logged run[/] on {task_id[:8]} by [bold]{agent}[/]")
+                                   status=status, cost_usd=cost, session_id=session,
+                                   commit_sha=commit, commit_message=commit_msg)
+            suffix = f" commit [{commit[:8]}]" if commit else ""
+            console.print(f"[green]Logged run[/] on {task_id[:8]} by [bold]{agent}[/]{suffix}")
     asyncio.run(_run())

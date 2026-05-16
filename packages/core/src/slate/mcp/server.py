@@ -80,7 +80,9 @@ async def list_tools() -> list[types.Tool]:
                              "outcome": {"type": "string"},
                              "status": {"type": "string"},
                              "cost_usd": {"type": "number"},
-                             "session_id": {"type": "string"}}}
+                             "session_id": {"type": "string"},
+                             "commit_sha": {"type": "string", "description": "Full or short git commit SHA"},
+                             "commit_message": {"type": "string", "description": "Git commit message"}}}
         ),
         types.Tool(
             name="get_task_context",

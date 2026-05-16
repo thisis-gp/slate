@@ -28,6 +28,7 @@ export interface Comment {
 export interface AgentRun {
   id: string; task_id: string; agent_name: string; tool: string; summary: string;
   outcome?: string; status: string; cost_usd: number; started_at: number;
+  commit_sha?: string; commit_message?: string;
 }
 export interface StateTransition {
   id: number; task_id: string; from_state?: string; to_state: string;

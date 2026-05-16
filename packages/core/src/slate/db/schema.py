@@ -67,17 +67,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE TABLE IF NOT EXISTS agent_runs (
-    id           TEXT PRIMARY KEY,
-    task_id      TEXT NOT NULL REFERENCES tasks(id),
-    session_id   TEXT REFERENCES sessions(id),
-    agent_name   TEXT NOT NULL,
-    tool         TEXT NOT NULL,
-    summary      TEXT NOT NULL,
-    outcome      TEXT,
-    status       TEXT NOT NULL DEFAULT 'completed',
-    started_at   REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
-    completed_at REAL,
-    cost_usd     REAL NOT NULL DEFAULT 0.0
+    id             TEXT PRIMARY KEY,
+    task_id        TEXT NOT NULL REFERENCES tasks(id),
+    session_id     TEXT REFERENCES sessions(id),
+    agent_name     TEXT NOT NULL,
+    tool           TEXT NOT NULL,
+    summary        TEXT NOT NULL,
+    outcome        TEXT,
+    status         TEXT NOT NULL DEFAULT 'completed',
+    commit_sha     TEXT,
+    commit_message TEXT,
+    started_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    completed_at   REAL,
+    cost_usd       REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS model_usage (
@@ -124,6 +126,8 @@ MIGRATIONS = [
     "ALTER TABLE tasks ADD COLUMN links TEXT",
     "ALTER TABLE state_transitions ADD COLUMN new_assignee TEXT",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_number ON tasks(project_id, number)",
+    "ALTER TABLE agent_runs ADD COLUMN commit_sha TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN commit_message TEXT",
 ]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:

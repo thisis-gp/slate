@@ -109,7 +109,8 @@ def show_task(task_id: str = typer.Argument(...)):
             console.print("\n[bold]Agent Runs:[/]")
             for r in ctx["runs"]:
                 cost = f" ${r['cost_usd']:.4f}" if r.get("cost_usd") else ""
-                console.print(f"  [{r['tool']}] {r['agent_name']}: {r['summary'][:80]}{cost}")
+                commit = f"\n    commit {r['commit_sha'][:8]} {r['commit_message'][:72]}" if r.get("commit_sha") else ""
+                console.print(f"  [{r['tool']}] {r['agent_name']}: {r['summary'][:80]}{cost}{commit}")
         if ctx["comments"]:
             console.print("\n[bold]Comments:[/]")
             for c in ctx["comments"]:
