@@ -1,14 +1,56 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { api, Comment } from "../api/client";
 
-const STATES = ["todo","investigating","implementing","code_review","qa","ready_to_merge","done","blocked","cancelled"];
+const STATES = ["todo","in_progress","code_review","qa","ready_to_merge","done","blocked","on_hold","cancelled"];
 const STATUS_STYLES: Record<string, string> = {
   completed: "bg-green-900/50 text-green-400",
   failed: "bg-red-900/50 text-red-400",
   blocked: "bg-yellow-900/50 text-yellow-400",
   in_progress: "bg-blue-900/50 text-blue-400",
 };
+
+function CommentSection({ taskId }: { taskId: string }) {
+  const qc = useQueryClient();
+  const { data: comments = [] } = useQuery({
+    queryKey: ["comments", taskId],
+    queryFn: () => api.comments.list(taskId),
+    refetchInterval: 10000,
+  });
+  const [body, setBody] = useState("");
+  const add = useMutation({
+    mutationFn: () => api.comments.add(taskId, "human", body, "human"),
+    onSuccess: () => { setBody(""); qc.invalidateQueries({ queryKey: ["comments", taskId] }); },
+  });
+  return (
+    <section className="mt-8">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">
+        Comments <span className="text-gray-700 font-normal">({comments.length})</span>
+      </h2>
+      <div className="space-y-3 mb-4">
+        {comments.map((c: Comment) => (
+          <div key={c.id} className="border-l-2 border-gray-800 pl-3">
+            <div className="flex gap-2 items-center mb-0.5">
+              <span className="text-xs font-semibold text-gray-300">{c.author}</span>
+              <span className="text-xs text-gray-600">{c.author_type}</span>
+            </div>
+            <p className="text-sm text-gray-400">{c.body}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input value={body} onChange={(e) => setBody(e.target.value)}
+          placeholder="Add a comment..."
+          className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-gray-500" />
+        <button onClick={() => body && add.mutate()}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm">
+          {add.isPending ? "..." : "Add"}
+        </button>
+      </div>
+    </section>
+  );
+}
 
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>();
@@ -19,6 +61,11 @@ export default function TaskDetail() {
     queryFn: () => api.tasks.context(id!),
     refetchInterval: 10000,
   });
+  const { data: project } = useQuery({
+    queryKey: ["project", ctx?.task?.project_id],
+    queryFn: () => api.projects.get(ctx!.task.project_id),
+    enabled: !!ctx?.task?.project_id,
+  });
   const move = useMutation({
     mutationFn: (state: string) => api.tasks.move(id!, state),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task-context", id] }),
@@ -27,19 +74,47 @@ export default function TaskDetail() {
   if (isLoading || !ctx) return <div className="p-8 text-gray-600 text-sm">Loading...</div>;
   const { task, runs, transitions } = ctx;
   const totalCost = runs.reduce((s, r) => s + r.cost_usd, 0);
+  const ticketId = project?.key && task.number
+    ? `${project.key}-${task.number}`
+    : id?.slice(0, 8);
 
   return (
     <div className="p-8 max-w-2xl">
       <button onClick={() => nav(-1)} className="text-gray-500 hover:text-white text-sm mb-6 block transition-colors">← Back</button>
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="flex-1">
-          <div className="text-xs text-gray-600 font-mono mb-1">{task.id.slice(0, 8)}</div>
+          <div className="text-xs text-gray-600 font-mono mb-1">{ticketId}</div>
           <h1 className="text-xl font-bold text-white leading-snug">{task.title}</h1>
           <div className="flex gap-2 mt-2 flex-wrap">
             <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded">{task.type}</span>
             <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded">{task.priority}</span>
             {task.assigned_to && <span className="text-xs bg-blue-900/50 text-blue-400 px-2 py-1 rounded">{task.assigned_to}</span>}
             {totalCost > 0 && <span className="text-xs bg-gray-800 text-yellow-600 px-2 py-1 rounded">${totalCost.toFixed(4)}</span>}
+            {task.story_points && (
+              <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded">{task.story_points}pt</span>
+            )}
+            {task.reporter && (
+              <span className="text-xs bg-gray-800 text-gray-500 px-2 py-1 rounded">by {task.reporter}</span>
+            )}
+            {task.labels && (() => {
+              try {
+                const labs = JSON.parse(task.labels);
+                return labs.map((l: string) => (
+                  <span key={l} className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">{l}</span>
+                ));
+              } catch { return null; }
+            })()}
+            {task.links && (() => {
+              try {
+                const lnks = JSON.parse(task.links);
+                return lnks.map((l: { url: string; label: string; type: string }, i: number) => (
+                  <a key={i} href={l.url} target="_blank" rel="noreferrer"
+                     className="text-xs bg-gray-800 text-blue-400 px-2 py-1 rounded hover:text-blue-300">
+                    {l.label || l.type}
+                  </a>
+                ));
+              } catch { return null; }
+            })()}
           </div>
         </div>
         <select value={task.state} onChange={(e) => move.mutate(e.target.value)}
@@ -79,6 +154,7 @@ export default function TaskDetail() {
           ))}
         </div>
       </section>
+      <CommentSection taskId={id!} />
     </div>
   );
 }

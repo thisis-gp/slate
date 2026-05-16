@@ -10,12 +10,19 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export interface Project {
-  id: string; name: string; description?: string; status: string; created_at: number;
+  id: string; name: string; key?: string; description?: string;
+  status: string; created_at: number;
 }
 export interface Task {
-  id: string; project_id: string; title: string; state: string; priority: string;
-  type: string; assigned_to?: string; created_by: string; description?: string;
-  parent_task_id?: string;
+  id: string; project_id: string; number?: number; title: string;
+  state: string; priority: string; type: string;
+  assigned_to?: string; reporter?: string; created_by: string;
+  description?: string; parent_task_id?: string;
+  story_points?: number; labels?: string; links?: string;
+}
+export interface Comment {
+  id: number; task_id: string; author: string;
+  author_type: string; body: string; ts: number;
 }
 export interface AgentRun {
   id: string; task_id: string; agent_name: string; tool: string; summary: string;
@@ -52,8 +59,9 @@ export interface WeeklySync {
 export const api = {
   projects: {
     list: () => req<Project[]>("/projects"),
-    create: (name: string, description = "") =>
-      req<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
+    get: (id: string) => req<Project>(`/projects/${id}`),
+    create: (name: string, description = "", key = "") =>
+      req<Project>("/projects", { method: "POST", body: JSON.stringify({ name, description, key }) }),
   },
   tasks: {
     list: (params: { project_id?: string; state?: string; assigned_to?: string } = {}) => {
@@ -65,11 +73,21 @@ export const api = {
     create: (data: {
       project_id: string; title: string; description?: string; type?: string;
       priority?: string; created_by?: string; assigned_to?: string;
+      reporter?: string; story_points?: number; labels?: string; links?: string;
     }) => req<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
     context: (id: string) => req<TaskContext>(`/tasks/${id}/context`),
-    move: (id: string, to_state: string, changed_by = "human") =>
+    move: (id: string, to_state: string, changed_by = "human", new_assignee = "") =>
       req<Task>(`/tasks/${id}/move`, {
-        method: "POST", body: JSON.stringify({ to_state, changed_by }),
+        method: "POST",
+        body: JSON.stringify({ to_state, changed_by, new_assignee }),
+      }),
+  },
+  comments: {
+    list: (taskId: string) => req<Comment[]>(`/tasks/${taskId}/comments`),
+    add: (taskId: string, author: string, body: string, author_type = "human") =>
+      req<Comment>(`/tasks/${taskId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ author, body, author_type }),
       }),
   },
   approvals: {

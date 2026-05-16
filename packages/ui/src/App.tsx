@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import ProjectList from "./components/ProjectList";
 import KanbanBoard from "./components/KanbanBoard";
 import TaskDetail from "./components/TaskDetail";
-import ApprovalQueue from "./components/ApprovalQueue";
 import SyncReport from "./components/SyncReport";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5000 } } });
@@ -19,7 +18,6 @@ export default function App() {
             </div>
             {[
               { to: "/", label: "Projects", icon: "◈" },
-              { to: "/approvals", label: "Approvals", icon: "◉" },
               { to: "/sync", label: "Sync", icon: "◎" },
             ].map(({ to, label, icon }) => (
               <NavLink
@@ -42,7 +40,6 @@ export default function App() {
               <Route path="/" element={<ProjectList />} />
               <Route path="/projects/:id" element={<KanbanBoard />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
-              <Route path="/approvals" element={<ApprovalQueue />} />
               <Route path="/sync" element={<SyncReport />} />
             </Routes>
           </main>

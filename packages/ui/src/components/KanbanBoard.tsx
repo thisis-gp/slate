@@ -4,14 +4,15 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api, Task } from "../api/client";
 
 const COLUMNS = [
-  { state: "todo", label: "Todo", color: "border-gray-600" },
-  { state: "investigating", label: "Investigating", color: "border-yellow-700" },
-  { state: "implementing", label: "Implementing", color: "border-blue-700" },
-  { state: "code_review", label: "Code Review", color: "border-purple-700" },
-  { state: "qa", label: "QA", color: "border-orange-700" },
-  { state: "ready_to_merge", label: "Ready", color: "border-green-700" },
-  { state: "done", label: "Done", color: "border-green-900" },
-  { state: "blocked", label: "Blocked", color: "border-red-700" },
+  { state: "todo",           label: "Todo",           color: "border-gray-600" },
+  { state: "in_progress",    label: "In Progress",    color: "border-blue-700" },
+  { state: "code_review",    label: "Code Review",    color: "border-purple-700" },
+  { state: "qa",             label: "QA",             color: "border-orange-700" },
+  { state: "ready_to_merge", label: "Ready",          color: "border-green-700" },
+  { state: "done",           label: "Done",           color: "border-green-900" },
+  { state: "blocked",        label: "Blocked",        color: "border-red-700" },
+  { state: "on_hold",        label: "On Hold",        color: "border-yellow-700" },
+  { state: "cancelled",      label: "Cancelled",      color: "border-gray-700" },
 ];
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -26,8 +27,18 @@ function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () =>
   const [title, setTitle] = useState("");
   const [type, setType] = useState("feature");
   const [priority, setPriority] = useState("medium");
+  const [points, setPoints] = useState(0);
+  const [labels, setLabels] = useState("");
   const create = useMutation({
-    mutationFn: () => api.tasks.create({ project_id: projectId, title, type, priority, created_by: "human" }),
+    mutationFn: () => api.tasks.create({
+      project_id: projectId,
+      title,
+      type,
+      priority,
+      created_by: "human",
+      story_points: points || undefined,
+      labels: labels ? JSON.stringify(labels.split(",").map(l => l.trim()).filter(Boolean)) : undefined,
+    }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks", projectId] }); onClose(); },
   });
   return (
@@ -37,7 +48,7 @@ function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () =>
         <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
           placeholder="Task title"
           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mb-3 focus:outline-none focus:border-gray-500" />
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-2 mb-3">
           <select value={type} onChange={(e) => setType(e.target.value)}
             className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-2 text-sm">
             {["feature","bug","research","chore","spike"].map(t => <option key={t}>{t}</option>)}
@@ -46,7 +57,15 @@ function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () =>
             className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-2 text-sm">
             {["low","medium","high","critical"].map(p => <option key={p}>{p}</option>)}
           </select>
+          <select value={points} onChange={(e) => setPoints(Number(e.target.value))}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-2 text-sm">
+            <option value={0}>- pts</option>
+            {[1,2,3,5,8,13].map(p => <option key={p} value={p}>{p}pt</option>)}
+          </select>
         </div>
+        <input value={labels} onChange={(e) => setLabels(e.target.value)}
+          placeholder="labels (comma-separated)"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mb-3 focus:outline-none focus:border-gray-500" />
         <div className="flex gap-2">
           <button onClick={() => title && create.mutate()}
             className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium">
@@ -63,6 +82,11 @@ export default function KanbanBoard() {
   const { id: projectId } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [showNew, setShowNew] = useState(false);
+  const { data: project } = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => api.projects.get(projectId!),
+    enabled: !!projectId,
+  });
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ["tasks", projectId],
     queryFn: () => api.tasks.list({ project_id: projectId }),
@@ -80,7 +104,7 @@ export default function KanbanBoard() {
         <div className="flex items-center gap-3">
           <button onClick={() => nav("/")} className="text-gray-500 hover:text-white text-sm transition-colors">← Projects</button>
           <span className="text-gray-700">/</span>
-          <span className="text-sm text-gray-400 font-mono">{projectId?.slice(0, 8)}</span>
+          <span className="text-sm text-gray-400 font-mono">{project?.key ?? projectId?.slice(0, 8)}</span>
         </div>
         <button onClick={() => setShowNew(true)}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors">
@@ -96,15 +120,21 @@ export default function KanbanBoard() {
               <span className="text-gray-600 font-normal">{byState[state]?.length ?? 0}</span>
             </div>
             <div className="flex flex-col gap-2">
-              {byState[state]?.map((task) => (
-                <button key={task.id} onClick={() => nav(`/tasks/${task.id}`)}
+              {byState[state]?.map((t) => (
+                <button key={t.id} onClick={() => nav(`/tasks/${t.id}`)}
                   className="text-left bg-gray-900 border border-gray-800 hover:border-gray-600 rounded p-3 transition-colors">
-                  <div className="text-sm text-white mb-2 leading-snug">{task.title}</div>
+                  <div className="text-xs text-gray-600 font-mono mb-1">
+                    {project?.key && t.number ? `${project.key}-${t.number}` : t.id.slice(0, 8)}
+                  </div>
+                  <div className="text-sm text-white mb-2 leading-snug">{t.title}</div>
                   <div className="flex flex-wrap gap-1">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">{task.type}</span>
-                    {task.assigned_to && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400">{task.assigned_to}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${PRIORITY_STYLES[t.priority]}`}>{t.priority}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">{t.type}</span>
+                    {t.assigned_to && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400">{t.assigned_to}</span>
+                    )}
+                    {t.story_points && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">{t.story_points}pt</span>
                     )}
                   </div>
                 </button>
