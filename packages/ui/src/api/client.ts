@@ -19,6 +19,7 @@ export interface Task {
   assigned_to?: string; reporter?: string; created_by: string;
   description?: string; parent_task_id?: string;
   story_points?: number; labels?: string; links?: string;
+  sprint_id?: string;
 }
 export interface Comment {
   id: number; task_id: string; author: string;
@@ -55,6 +56,11 @@ export interface WeeklySync {
   period: { from: string; to: string }; total_runs: number;
   total_cost_usd: number; days: DailySync[];
 }
+export interface Sprint {
+  id: string; project_id: string; name: string;
+  goal?: string; start_date?: string; end_date?: string;
+  status: string; created_at: number;
+}
 
 export const api = {
   projects: {
@@ -74,6 +80,7 @@ export const api = {
       project_id: string; title: string; description?: string; type?: string;
       priority?: string; created_by?: string; assigned_to?: string;
       reporter?: string; story_points?: number; labels?: string; links?: string;
+      sprint_id?: string;
     }) => req<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
     context: (id: string) => req<TaskContext>(`/tasks/${id}/context`),
     move: (id: string, to_state: string, changed_by = "human", new_assignee = "") =>
@@ -94,5 +101,20 @@ export const api = {
     daily: (date_str = "") =>
       req<DailySync>(`/sync/daily${date_str ? `?date_str=${date_str}` : ""}`),
     weekly: () => req<WeeklySync>("/sync/weekly"),
+  },
+  sprints: {
+    list: (params: { project_id?: string; status?: string } = {}) => {
+      const qs = new URLSearchParams(
+        Object.fromEntries(Object.entries(params).filter(([, v]) => v)) as Record<string, string>
+      ).toString();
+      return req<Sprint[]>(`/sprints${qs ? `?${qs}` : ""}`);
+    },
+    create: (data: { project_id: string; name: string; goal?: string; start_date?: string; end_date?: string }) =>
+      req<Sprint>("/sprints", { method: "POST", body: JSON.stringify(data) }),
+    get: (id: string) => req<Sprint & { tasks: unknown[] }>(`/sprints/${id}`),
+    start: (id: string) => req<Sprint>(`/sprints/${id}/start`, { method: "POST" }),
+    complete: (id: string) => req<Sprint>(`/sprints/${id}/complete`, { method: "POST" }),
+    assign: (sprintId: string, taskId: string) =>
+      req<{ ok: boolean }>(`/sprints/${sprintId}/assign/${taskId}`, { method: "POST" }),
   },
 };

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { api, Task } from "../api/client";
+import { api, Task, Sprint } from "../api/client";
 
 const COLUMNS = [
   { state: "todo",           label: "Todo",           color: "border-gray-600" },
@@ -22,7 +22,45 @@ const PRIORITY_STYLES: Record<string, string> = {
   low: "bg-gray-800 text-gray-500",
 };
 
-function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+function NewSprintForm({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [goal, setGoal] = useState("");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const create = useMutation({
+    mutationFn: () => api.sprints.create({ project_id: projectId, name, goal, start_date: start, end_date: end }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["sprints", projectId] }); onClose(); },
+  });
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-bold mb-4">New Sprint</h2>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Sprint name (e.g. Sprint 1)"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mb-3 focus:outline-none focus:border-gray-500" />
+        <input value={goal} onChange={(e) => setGoal(e.target.value)}
+          placeholder="Sprint goal (optional)"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mb-3 focus:outline-none focus:border-gray-500" />
+        <div className="flex gap-2 mb-3">
+          <input type="date" value={start} onChange={(e) => setStart(e.target.value)}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-gray-500" />
+          <input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-gray-500" />
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => name && create.mutate()}
+            className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium">
+            {create.isPending ? "Creating..." : "Create Sprint"}
+          </button>
+          <button onClick={onClose} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewTaskForm({ projectId, onClose, sprintId }: { projectId: string; onClose: () => void; sprintId?: string }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
   const [type, setType] = useState("feature");
@@ -38,6 +76,7 @@ function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () =>
       created_by: "human",
       story_points: points || undefined,
       labels: labels ? JSON.stringify(labels.split(",").map(l => l.trim()).filter(Boolean)) : undefined,
+      ...(sprintId ? { sprint_id: sprintId } : {}),
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks", projectId] }); onClose(); },
   });
@@ -82,6 +121,8 @@ export default function KanbanBoard() {
   const { id: projectId } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [showNew, setShowNew] = useState(false);
+  const [showNewSprint, setShowNewSprint] = useState(false);
+  const [activeSprint, setActiveSprint] = useState<string>("");
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.projects.get(projectId!),
@@ -92,24 +133,46 @@ export default function KanbanBoard() {
     queryFn: () => api.tasks.list({ project_id: projectId }),
     refetchInterval: 15000,
   });
+  const { data: sprints = [] } = useQuery({
+    queryKey: ["sprints", projectId],
+    queryFn: () => api.sprints.list({ project_id: projectId }),
+    enabled: !!projectId,
+  });
+  const filteredTasks = activeSprint
+    ? tasks.filter((t) => t.sprint_id === activeSprint)
+    : tasks;
   const byState = COLUMNS.reduce((acc, col) => {
-    acc[col.state] = tasks.filter((t) => t.state === col.state);
+    acc[col.state] = filteredTasks.filter((t) => t.state === col.state);
     return acc;
   }, {} as Record<string, Task[]>);
 
   return (
     <div className="p-6 h-full flex flex-col">
-      {showNew && projectId && <NewTaskForm projectId={projectId} onClose={() => setShowNew(false)} />}
+      {showNew && projectId && <NewTaskForm projectId={projectId} onClose={() => setShowNew(false)} sprintId={activeSprint || undefined} />}
+      {showNewSprint && projectId && <NewSprintForm projectId={projectId} onClose={() => setShowNewSprint(false)} />}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
           <button onClick={() => nav("/")} className="text-gray-500 hover:text-white text-sm transition-colors">← Projects</button>
           <span className="text-gray-700">/</span>
           <span className="text-sm text-gray-400 font-mono">{project?.key ?? projectId?.slice(0, 8)}</span>
         </div>
-        <button onClick={() => setShowNew(true)}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors">
-          + New Task
-        </button>
+        <div className="flex items-center gap-2">
+          <select value={activeSprint} onChange={(e) => setActiveSprint(e.target.value)}
+            className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs text-gray-400">
+            <option value="">All sprints</option>
+            {sprints.map((s: Sprint) => (
+              <option key={s.id} value={s.id}>{s.name} ({s.status})</option>
+            ))}
+          </select>
+          <button onClick={() => setShowNewSprint(true)}
+            className="px-2 py-1 border border-gray-700 hover:border-gray-500 rounded text-xs text-gray-400 hover:text-gray-200 transition-colors">
+            + Sprint
+          </button>
+          <button onClick={() => setShowNew(true)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium transition-colors">
+            + New Task
+          </button>
+        </div>
       </div>
       {isLoading && <div className="text-gray-600 text-sm">Loading tasks...</div>}
       <div className="flex gap-3 overflow-x-auto pb-4 flex-1">

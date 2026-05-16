@@ -11,6 +11,7 @@ from slate.api.routes.tasks import router as tasks_router
 from slate.api.routes.runs import router as runs_router
 from slate.api.routes.sessions import router as sessions_router
 from slate.api.routes.sync import router as sync_router
+from slate.api.routes.sprints import router as sprints_router
 
 DB_PATH = Path.home() / ".slate" / "db.sqlite"
 
@@ -36,4 +37,5 @@ def create_app() -> FastAPI:
     app.include_router(runs_router)
     app.include_router(sessions_router)
     app.include_router(sync_router)
+    app.include_router(sprints_router)
     return app

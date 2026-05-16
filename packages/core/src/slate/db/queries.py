@@ -253,3 +253,70 @@ async def get_daily_sync(db: aiosqlite.Connection, date: str) -> dict[str, Any]:
         "transitions": transitions,
         "total_cost_usd": total_cost,
     }
+
+
+async def insert_sprint(db, *, id: str, project_id: str, name: str,
+                         goal: str = "", start_date: str = "", end_date: str = "") -> None:
+    now = time.time()
+    proj = await get_project(db, project_id)
+    full_project_id = proj["id"] if proj else project_id
+    await db.execute(
+        "INSERT INTO sprints (id, project_id, name, goal, start_date, end_date, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (id, full_project_id, name, goal or None, start_date or None, end_date or None, now),
+    )
+    await db.commit()
+
+
+async def get_sprint(db, sprint_id: str) -> Optional[dict]:
+    async with db.execute(
+        "SELECT * FROM sprints WHERE id = ? OR id LIKE ?", (sprint_id, f"{sprint_id}%")
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def list_sprints(db, project_id: str = "", status: str = "") -> list[dict]:
+    conditions, params = [], []
+    if project_id:
+        proj = await get_project(db, project_id)
+        full_project_id = proj["id"] if proj else project_id
+        conditions.append("project_id = ?")
+        params.append(full_project_id)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    async with db.execute(
+        f"SELECT * FROM sprints {where} ORDER BY created_at DESC", params
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def update_sprint_status(db, sprint_id: str, status: str) -> None:
+    sprint = await get_sprint(db, sprint_id)
+    full_id = sprint["id"] if sprint else sprint_id
+    await db.execute("UPDATE sprints SET status = ? WHERE id = ?", (status, full_id))
+    await db.commit()
+
+
+async def assign_task_to_sprint(db, task_id: str, sprint_id: str) -> None:
+    task = await get_task(db, task_id)
+    full_task_id = task["id"] if task else task_id
+    sprint = await get_sprint(db, sprint_id)
+    full_sprint_id = sprint["id"] if sprint else sprint_id
+    now = time.time()
+    await db.execute(
+        "UPDATE tasks SET sprint_id = ?, updated_at = ? WHERE id = ?",
+        (full_sprint_id, now, full_task_id)
+    )
+    await db.commit()
+
+
+async def get_sprint_tasks(db, sprint_id: str) -> list[dict]:
+    sprint = await get_sprint(db, sprint_id)
+    full_id = sprint["id"] if sprint else sprint_id
+    async with db.execute(
+        "SELECT * FROM tasks WHERE sprint_id = ? ORDER BY created_at ASC", (full_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
