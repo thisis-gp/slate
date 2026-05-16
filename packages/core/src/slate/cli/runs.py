@@ -8,7 +8,7 @@ from slate.db.schema import apply_schema
 from slate.db.queries import insert_agent_run
 
 app = typer.Typer(help="Log agent runs")
-console = Console()
+console = Console(legacy_windows=False)
 
 def _db_path() -> Path:
     p = Path.home() / ".slate" / "db.sqlite"

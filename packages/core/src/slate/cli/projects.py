@@ -9,7 +9,7 @@ import aiosqlite
 from pathlib import Path
 
 app = typer.Typer(help="Manage projects")
-console = Console()
+console = Console(legacy_windows=False)
 
 def _db_path() -> Path:
     p = Path.home() / ".slate" / "db.sqlite"

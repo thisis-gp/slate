@@ -10,7 +10,7 @@ from slate.db.schema import apply_schema
 from slate.db.queries import insert_task, list_tasks, get_task_context, update_task_state
 
 app = typer.Typer(help="Manage tasks")
-console = Console()
+console = Console(legacy_windows=False)
 
 def _db_path() -> Path:
     p = Path.home() / ".slate" / "db.sqlite"
@@ -52,7 +52,7 @@ def list_task(
         table = Table("ID", "Title", "State", "Priority", "Assigned To", "Type")
         for t in tasks:
             table.add_row(t["id"][:8], t["title"], t["state"],
-                          t["priority"], t["assigned_to"] or "—", t["type"])
+                          t["priority"], t["assigned_to"] or "-", t["type"])
         console.print(table)
     asyncio.run(_run())
 
@@ -67,7 +67,7 @@ def show_task(task_id: str = typer.Argument(...)):
         console.print(Panel(
             f"[bold]{task['title']}[/]\nState: [yellow]{task['state']}[/]  "
             f"Priority: {task['priority']}  Type: {task['type']}\n"
-            f"Assigned to: {task['assigned_to'] or '—'}\n\n{task['description'] or ''}",
+            f"Assigned to: {task['assigned_to'] or '-'}\n\n{task['description'] or ''}",
             title=f"Task {task_id[:8]}"
         ))
         if ctx["runs"]:
@@ -77,7 +77,7 @@ def show_task(task_id: str = typer.Argument(...)):
         if ctx["transitions"]:
             console.print("\n[bold]State History:[/]")
             for t in ctx["transitions"]:
-                console.print(f"  {t['from_state'] or '—'} → {t['to_state']} by {t['changed_by']}")
+                console.print(f"  {t['from_state'] or '-'} -> {t['to_state']} by {t['changed_by']}")
     asyncio.run(_run())
 
 @app.command("move")
@@ -93,5 +93,5 @@ def move_task(
             await apply_schema(db)
             await update_task_state(db, task_id=task_id, to_state=state,
                                     changed_by=by, reason=reason)
-            console.print(f"[green]Moved[/] {task_id[:8]} → [bold]{state}[/]")
+            console.print(f"[green]Moved[/] {task_id[:8]} -> [bold]{state}[/]")
     asyncio.run(_run())

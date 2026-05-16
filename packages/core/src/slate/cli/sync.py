@@ -10,7 +10,7 @@ from slate.db.schema import apply_schema
 from slate.db.queries import get_daily_sync
 
 app = typer.Typer(help="Generate sync reports")
-console = Console()
+console = Console(legacy_windows=False)
 
 def _db_path() -> Path:
     p = Path.home() / ".slate" / "db.sqlite"
@@ -26,7 +26,7 @@ def daily(target_date: str = typer.Option("", "--date", "-d")):
             await apply_schema(db)
             data = await get_daily_sync(db, d)
         console.print(Panel(
-            f"[bold]Daily Sync — {data['date']}[/]\n\n"
+            f"[bold]Daily Sync -{data['date']}[/]\n\n"
             f"Sessions: {len(data['sessions'])}  Runs: {len(data['runs'])}  "
             f"Transitions: {len(data['transitions'])}  Cost: [yellow]${data['total_cost_usd']:.4f}[/]",
             title="Daily Sync"
@@ -45,7 +45,7 @@ def weekly():
         total_runs = sum(len(d["runs"]) for d in all_data)
         total_cost = sum(d["total_cost_usd"] for d in all_data)
         console.print(Panel(
-            f"[bold]Weekly Sync — {days[0]} to {days[-1]}[/]\n\n"
+            f"[bold]Weekly Sync -{days[0]} to {days[-1]}[/]\n\n"
             f"Total runs: {total_runs}  Cost: [yellow]${total_cost:.4f}[/]",
             title="Weekly Sync"
         ))

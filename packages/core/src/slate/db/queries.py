@@ -50,7 +50,9 @@ async def insert_task(db: aiosqlite.Connection, *, id: str, project_id: str,
 
 
 async def get_task(db: aiosqlite.Connection, task_id: str) -> Optional[dict]:
-    async with db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)) as cur:
+    async with db.execute(
+        "SELECT * FROM tasks WHERE id = ? OR id LIKE ?", (task_id, f"{task_id}%")
+    ) as cur:
         row = await cur.fetchone()
         return dict(row) if row else None
 
@@ -59,8 +61,8 @@ async def list_tasks(db: aiosqlite.Connection, project_id: str = "",
                       state: str = "", assigned_to: str = "") -> list[dict]:
     conditions, params = [], []
     if project_id:
-        conditions.append("project_id = ?")
-        params.append(project_id)
+        conditions.append("(project_id = ? OR project_id LIKE ?)")
+        params.extend([project_id, f"{project_id}%"])
     if state:
         conditions.append("state = ?")
         params.append(state)
@@ -78,17 +80,20 @@ async def update_task_state(db: aiosqlite.Connection, *, task_id: str,
                              to_state: str, changed_by: str,
                              reason: str = "") -> None:
     now = time.time()
-    async with db.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)) as cur:
+    async with db.execute(
+        "SELECT id, state FROM tasks WHERE id = ? OR id LIKE ?", (task_id, f"{task_id}%")
+    ) as cur:
         row = await cur.fetchone()
-        from_state = row[0] if row else None
+        full_id = row[0] if row else task_id
+        from_state = row[1] if row else None
     await db.execute(
         "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
-        (to_state, now, task_id),
+        (to_state, now, full_id),
     )
     await db.execute(
         "INSERT INTO state_transitions (task_id, from_state, to_state, changed_by, reason, ts) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (task_id, from_state, to_state, changed_by, reason or None, now),
+        (full_id, from_state, to_state, changed_by, reason or None, now),
     )
     await db.commit()
 
@@ -133,16 +138,17 @@ async def insert_agent_run(db: aiosqlite.Connection, *, id: str, task_id: str,
 
 async def get_task_context(db: aiosqlite.Connection, task_id: str) -> dict[str, Any]:
     task = await get_task(db, task_id)
+    full_id = task["id"] if task else task_id
     async with db.execute(
-        "SELECT * FROM agent_runs WHERE task_id = ? ORDER BY started_at ASC", (task_id,)
+        "SELECT * FROM agent_runs WHERE task_id = ? ORDER BY started_at ASC", (full_id,)
     ) as cur:
         runs = [dict(r) async for r in cur]
     async with db.execute(
-        "SELECT * FROM state_transitions WHERE task_id = ? ORDER BY ts ASC", (task_id,)
+        "SELECT * FROM state_transitions WHERE task_id = ? ORDER BY ts ASC", (full_id,)
     ) as cur:
         transitions = [dict(r) async for r in cur]
     async with db.execute(
-        "SELECT * FROM comments WHERE task_id = ? ORDER BY ts ASC", (task_id,)
+        "SELECT * FROM comments WHERE task_id = ? ORDER BY ts ASC", (full_id,)
     ) as cur:
         comments = [dict(r) async for r in cur]
     return {"task": task, "runs": runs, "transitions": transitions, "comments": comments}
@@ -164,8 +170,9 @@ async def respond_approval(db: aiosqlite.Connection, *, approval_id: str,
                             status: str, response_note: str = "") -> None:
     now = time.time()
     await db.execute(
-        "UPDATE approvals SET status = ?, response_note = ?, responded_at = ? WHERE id = ?",
-        (status, response_note or None, now, approval_id),
+        "UPDATE approvals SET status = ?, response_note = ?, responded_at = ? "
+        "WHERE id = ? OR id LIKE ?",
+        (status, response_note or None, now, approval_id, f"{approval_id}%"),
     )
     await db.commit()
 
