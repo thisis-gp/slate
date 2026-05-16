@@ -1,6 +1,19 @@
 {
   "mcpServers": {
     "slate": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "slate-api",
+        "uv",
+        "run",
+        "--directory",
+        "/app",
+        "slate-mcp"
+      ]
+    },
+    "slate-local": {
       "command": "uv",
       "args": [
         "run",

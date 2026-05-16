@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+packages/ui/node_modules/
+packages/ui/dist/
+tests/
+.git/
+.agentic-os/
+*.md
+docs/
+.slate/*.sqlite

@@ -1,0 +1,34 @@
+services:
+  slate-api:
+    build:
+      context: .
+      target: api
+    container_name: slate-api
+    ports:
+      - "7331:8000"
+    volumes:
+      - slate-data:/root/.slate
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "uv", "run", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  slate-ui:
+    build:
+      context: .
+      target: ui
+    container_name: slate-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      slate-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  slate-data:
+    name: slate-data
