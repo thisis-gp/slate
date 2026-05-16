@@ -37,10 +37,12 @@ export interface DailySync {
   total_cost_usd: number;
 }
 export interface RunEntry {
-  tool: string; agent_name: string; task_title: string; summary: string;
+  task_id: string; tool: string; agent_name: string; task_title: string;
+  summary: string; cost_usd: number;
 }
 export interface TransitionEntry {
-  task_title: string; from_state?: string; to_state: string; changed_by: string;
+  task_id: string; task_title: string; from_state?: string; to_state: string;
+  changed_by: string; reason?: string;
 }
 export interface WeeklySync {
   period: { from: string; to: string }; total_runs: number;

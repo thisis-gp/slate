@@ -126,11 +126,14 @@ async def insert_agent_run(db: aiosqlite.Connection, *, id: str, task_id: str,
                             status: str = "completed",
                             cost_usd: float = 0.0) -> None:
     now = time.time()
+    # Resolve short ID prefix to full UUID
+    task = await get_task(db, task_id)
+    full_task_id = task["id"] if task else task_id
     await db.execute(
         "INSERT INTO agent_runs (id, task_id, session_id, agent_name, tool, summary, "
         "outcome, status, started_at, completed_at, cost_usd) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (id, task_id, session_id or None, agent_name, tool, summary,
+        (id, full_task_id, session_id or None, agent_name, tool, summary,
          outcome or None, status, now, now, cost_usd),
     )
     await db.commit()
