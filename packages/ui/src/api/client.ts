@@ -90,13 +90,6 @@ export const api = {
         body: JSON.stringify({ author, body, author_type }),
       }),
   },
-  approvals: {
-    list: (status = "pending") => req<Approval[]>(`/approvals?status=${status}`),
-    respond: (id: string, status: "approved" | "rejected", note = "") =>
-      req(`/approvals/${id}/respond`, {
-        method: "POST", body: JSON.stringify({ status, response_note: note }),
-      }),
-  },
   sync: {
     daily: (date_str = "") =>
       req<DailySync>(`/sync/daily${date_str ? `?date_str=${date_str}` : ""}`),
