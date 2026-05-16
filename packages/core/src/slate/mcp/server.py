@@ -29,7 +29,8 @@ async def list_tools() -> list[types.Tool]:
             description="Create a new project in Slate",
             inputSchema={"type": "object", "required": ["name"],
                          "properties": {"name": {"type": "string"},
-                                        "description": {"type": "string"}}}
+                                        "description": {"type": "string"},
+                                        "key": {"type": "string", "description": "Short uppercase project key e.g. BX"}}}
         ),
         types.Tool(
             name="create_task",
@@ -45,21 +46,26 @@ async def list_tools() -> list[types.Tool]:
                                           "enum": ["low","medium","high","critical"]},
                              "created_by": {"type": "string"},
                              "assigned_to": {"type": "string"},
-                             "parent_task_id": {"type": "string"}}}
+                             "reporter": {"type": "string"},
+                             "parent_task_id": {"type": "string"},
+                             "story_points": {"type": "integer", "enum": [1, 2, 3, 5, 8, 13]},
+                             "labels": {"type": "string", "description": "JSON array string e.g. [\"auth\",\"backend\"]"},
+                             "links": {"type": "string", "description": "JSON array string e.g. [{\"url\":\"...\",\"label\":\"...\",\"type\":\"doc\"}]"}}}
         ),
         types.Tool(
             name="update_task_state",
-            description="Move a task to a new workflow state",
+            description="Move a task to a new state and optionally reassign it",
             inputSchema={"type": "object",
                          "required": ["task_id", "to_state", "changed_by"],
                          "properties": {
                              "task_id": {"type": "string"},
                              "to_state": {"type": "string",
-                                          "enum": ["todo","investigating","implementing",
-                                                   "code_review","qa","ready_to_merge",
-                                                   "done","blocked","cancelled"]},
+                                          "enum": ["todo","in_progress","code_review","qa",
+                                                   "ready_to_merge","done","blocked",
+                                                   "on_hold","cancelled"]},
                              "changed_by": {"type": "string"},
-                             "reason": {"type": "string"}}}
+                             "reason": {"type": "string"},
+                             "new_assignee": {"type": "string"}}}
         ),
         types.Tool(
             name="log_agent_run",
@@ -92,14 +98,14 @@ async def list_tools() -> list[types.Tool]:
                              "assigned_to": {"type": "string"}}}
         ),
         types.Tool(
-            name="request_approval",
-            description="Request human approval before proceeding with a risky operation",
-            inputSchema={"type": "object", "required": ["requested_by", "reason"],
+            name="add_comment",
+            description="Add a comment to a task — use for notes, status updates, review feedback",
+            inputSchema={"type": "object", "required": ["task_id", "author", "body"],
                          "properties": {
                              "task_id": {"type": "string"},
-                             "requested_by": {"type": "string"},
-                             "reason": {"type": "string"},
-                             "context": {"type": "string"}}}
+                             "author": {"type": "string"},
+                             "body": {"type": "string"},
+                             "author_type": {"type": "string", "enum": ["agent", "human"]}}}
         ),
         types.Tool(
             name="daily_sync",
@@ -127,8 +133,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             result = await tools.get_task_context(db, arguments["task_id"])
         elif name == "list_tasks":
             result = await tools.list_tasks_tool(db, **arguments)
-        elif name == "request_approval":
-            result = await tools.request_approval(db, **arguments)
+        elif name == "add_comment":
+            result = await tools.add_comment_tool(db, **arguments)
         elif name == "daily_sync":
             result = await tools.daily_sync_tool(db, **arguments)
         else:
