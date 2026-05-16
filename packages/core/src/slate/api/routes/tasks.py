@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
-from slate.db.queries import insert_task, get_task, list_tasks, update_task_state, get_task_context
+from slate.db.queries import insert_task, get_task, list_tasks, update_task_state, get_task_context, add_comment, list_comments
 
 router = APIRouter(tags=["tasks"])
 
@@ -14,13 +14,24 @@ class CreateTaskRequest(BaseModel):
     type: str = "feature"
     priority: str = "medium"
     created_by: str = "human"
+    reporter: str = ""
     assigned_to: str = ""
     parent_task_id: str = ""
+    sprint_id: str = ""
+    story_points: int = 0
+    labels: str = ""   # JSON array string e.g. '["auth","backend"]'
+    links: str = ""    # JSON array string e.g. '[{"url":"...","label":"...","type":"doc"}]'
 
 class MoveTaskRequest(BaseModel):
     to_state: str
     changed_by: str = "human"
     reason: str = ""
+    new_assignee: str = ""
+
+class AddCommentRequest(BaseModel):
+    author: str
+    body: str
+    author_type: str = "agent"
 
 @router.post("/tasks", status_code=201)
 async def create_task(body: CreateTaskRequest, request: Request):
@@ -45,9 +56,19 @@ async def get_task_by_id(task_id: str, request: Request):
 async def move_task(task_id: str, body: MoveTaskRequest, request: Request):
     await update_task_state(request.app.state.db, task_id=task_id,
                              to_state=body.to_state, changed_by=body.changed_by,
-                             reason=body.reason)
+                             reason=body.reason, new_assignee=body.new_assignee)
     return await get_task(request.app.state.db, task_id)
 
 @router.get("/tasks/{task_id}/context")
 async def task_context(task_id: str, request: Request):
     return await get_task_context(request.app.state.db, task_id)
+
+@router.post("/tasks/{task_id}/comments", status_code=201)
+async def create_comment(task_id: str, body: AddCommentRequest, request: Request):
+    return await add_comment(request.app.state.db, task_id=task_id,
+                              author=body.author, body=body.body,
+                              author_type=body.author_type)
+
+@router.get("/tasks/{task_id}/comments")
+async def get_comments(task_id: str, request: Request):
+    return await list_comments(request.app.state.db, task_id)

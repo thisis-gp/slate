@@ -9,12 +9,14 @@ router = APIRouter(tags=["projects"])
 class CreateProjectRequest(BaseModel):
     name: str
     description: str = ""
+    key: str = ""   # short uppercase identifier, e.g. "BX"
 
 @router.post("/projects", status_code=201)
 async def create_project(body: CreateProjectRequest, request: Request):
     pid = str(uuid.uuid4())
     await insert_project(request.app.state.db, id=pid,
-                          name=body.name, description=body.description)
+                          name=body.name, description=body.description,
+                          key=body.key)
     return await get_project(request.app.state.db, pid)
 
 @router.get("/projects")
