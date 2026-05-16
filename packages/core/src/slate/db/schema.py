@@ -107,7 +107,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent     ON tasks(parent_task_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_number ON tasks(project_id, number);
 CREATE INDEX IF NOT EXISTS idx_runs_task        ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_session     ON agent_runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
@@ -124,6 +123,7 @@ MIGRATIONS = [
     "ALTER TABLE tasks ADD COLUMN labels TEXT",
     "ALTER TABLE tasks ADD COLUMN links TEXT",
     "ALTER TABLE state_transitions ADD COLUMN new_assignee TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_number ON tasks(project_id, number)",
 ]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:
