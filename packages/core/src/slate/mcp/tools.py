@@ -54,15 +54,6 @@ async def list_tasks_tool(db: aiosqlite.Connection, project_id: str = "",
                                assigned_to=assigned_to)
 
 
-async def request_approval(db: aiosqlite.Connection, *, task_id: str = "",
-                             requested_by: str, reason: str,
-                             context: str = "") -> dict:
-    aid = str(uuid.uuid4())
-    await q.insert_approval(db, id=aid, task_id=task_id, requested_by=requested_by,
-                             reason=reason, context=context)
-    return {"id": aid, "status": "pending", "reason": reason}
-
-
 async def daily_sync_tool(db: aiosqlite.Connection, date_str: str = "") -> dict:
     d = date_str or date.today().isoformat()
     return await q.get_daily_sync(db, d)

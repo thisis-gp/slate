@@ -4,19 +4,28 @@ import aiosqlite
 from typing import Any, Optional
 
 
+def _looks_like_uuid(s: str) -> bool:
+    # UUIDs have 4 hyphens and hex segments
+    parts = s.split("-")
+    return len(parts) == 5 and all(len(p) in (8, 4, 4, 4, 12) for p in parts)
+
+
 async def insert_project(db: aiosqlite.Connection, *, id: str, name: str,
-                          description: str = "", status: str = "active") -> None:
+                          description: str = "", status: str = "active",
+                          key: str = "") -> None:
     now = time.time()
     await db.execute(
-        "INSERT INTO projects (id, name, description, status, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (id, name, description, status, now, now),
+        "INSERT INTO projects (id, name, description, status, key, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (id, name, description, status, key.upper() or None, now, now),
     )
     await db.commit()
 
 
 async def get_project(db: aiosqlite.Connection, project_id: str) -> Optional[dict]:
-    async with db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)) as cur:
+    async with db.execute(
+        "SELECT * FROM projects WHERE id = ? OR key = ?", (project_id, project_id.upper())
+    ) as cur:
         row = await cur.fetchone()
         return dict(row) if row else None
 
@@ -31,15 +40,28 @@ async def list_projects(db: aiosqlite.Connection, status: str = "active") -> lis
 async def insert_task(db: aiosqlite.Connection, *, id: str, project_id: str,
                        title: str, description: str = "", type: str = "feature",
                        priority: str = "medium", created_by: str = "human",
-                       assigned_to: str = "", parent_task_id: str = "",
-                       sprint_id: str = "") -> None:
+                       reporter: str = "", assigned_to: str = "",
+                       parent_task_id: str = "", sprint_id: str = "",
+                       story_points: int = 0, labels: str = "",
+                       links: str = "") -> None:
     now = time.time()
+    # Resolve project to full ID if a key was passed (e.g. "BX")
+    proj = await get_project(db, project_id)
+    full_project_id = proj["id"] if proj else project_id
+    # Auto-increment number per project
+    async with db.execute(
+        "SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = ?", (full_project_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        number = row[0] if row else 1
     await db.execute(
-        "INSERT INTO tasks (id, project_id, parent_task_id, sprint_id, title, "
-        "description, type, state, priority, created_by, assigned_to, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
-        (id, project_id, parent_task_id or None, sprint_id or None,
-         title, description, type, priority, created_by, assigned_to or None, now, now),
+        "INSERT INTO tasks (id, project_id, parent_task_id, sprint_id, number, title, "
+        "description, type, state, priority, created_by, reporter, assigned_to, "
+        "story_points, labels, links, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (id, full_project_id, parent_task_id or None, sprint_id or None, number,
+         title, description, type, priority, created_by, reporter or None,
+         assigned_to or None, story_points or None, labels or None, links or None, now, now),
     )
     await db.execute(
         "INSERT INTO state_transitions (task_id, from_state, to_state, changed_by, ts) "
@@ -50,6 +72,18 @@ async def insert_task(db: aiosqlite.Connection, *, id: str, project_id: str,
 
 
 async def get_task(db: aiosqlite.Connection, task_id: str) -> Optional[dict]:
+    # Ticket ID format: KEY-NUMBER (e.g. BX-42)
+    if "-" in task_id and not _looks_like_uuid(task_id):
+        parts = task_id.rsplit("-", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            key, number = parts[0].upper(), int(parts[1])
+            async with db.execute(
+                "SELECT t.* FROM tasks t JOIN projects p ON t.project_id = p.id "
+                "WHERE p.key = ? AND t.number = ?", (key, number)
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+    # UUID or prefix
     async with db.execute(
         "SELECT * FROM tasks WHERE id = ? OR id LIKE ?", (task_id, f"{task_id}%")
     ) as cur:
@@ -78,24 +112,53 @@ async def list_tasks(db: aiosqlite.Connection, project_id: str = "",
 
 async def update_task_state(db: aiosqlite.Connection, *, task_id: str,
                              to_state: str, changed_by: str,
-                             reason: str = "") -> None:
+                             reason: str = "", new_assignee: str = "") -> None:
     now = time.time()
-    async with db.execute(
-        "SELECT id, state FROM tasks WHERE id = ? OR id LIKE ?", (task_id, f"{task_id}%")
-    ) as cur:
-        row = await cur.fetchone()
-        full_id = row[0] if row else task_id
-        from_state = row[1] if row else None
+    # Resolve ticket ID format (BX-42) or UUID prefix
+    task = await get_task(db, task_id)
+    if task:
+        full_id = task["id"]
+        from_state = task["state"]
+    else:
+        full_id = task_id
+        from_state = None
+    update_parts = ["state = ?", "updated_at = ?"]
+    update_params: list[Any] = [to_state, now]
+    if new_assignee:
+        update_parts.append("assigned_to = ?")
+        update_params.append(new_assignee)
+    update_params.append(full_id)
     await db.execute(
-        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
-        (to_state, now, full_id),
+        f"UPDATE tasks SET {', '.join(update_parts)} WHERE id = ?", update_params
     )
     await db.execute(
-        "INSERT INTO state_transitions (task_id, from_state, to_state, changed_by, reason, ts) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (full_id, from_state, to_state, changed_by, reason or None, now),
+        "INSERT INTO state_transitions (task_id, from_state, to_state, changed_by, reason, new_assignee, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (full_id, from_state, to_state, changed_by, reason or None, new_assignee or None, now),
     )
     await db.commit()
+
+
+async def add_comment(db: aiosqlite.Connection, *, task_id: str, author: str,
+                       body: str, author_type: str = "agent") -> dict:
+    now = time.time()
+    task = await get_task(db, task_id)
+    full_id = task["id"] if task else task_id
+    async with db.execute(
+        "INSERT INTO comments (task_id, author, author_type, body, ts) VALUES (?, ?, ?, ?, ?) RETURNING *",
+        (full_id, author, author_type, body, now),
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else {}
+
+
+async def list_comments(db: aiosqlite.Connection, task_id: str) -> list[dict]:
+    task = await get_task(db, task_id)
+    full_id = task["id"] if task else task_id
+    async with db.execute(
+        "SELECT * FROM comments WHERE task_id = ? ORDER BY ts ASC", (full_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
 
 
 async def insert_session(db: aiosqlite.Connection, *, id: str, agent_name: str,
@@ -126,7 +189,7 @@ async def insert_agent_run(db: aiosqlite.Connection, *, id: str, task_id: str,
                             status: str = "completed",
                             cost_usd: float = 0.0) -> None:
     now = time.time()
-    # Resolve short ID prefix to full UUID
+    # Resolve short ID prefix or ticket ID to full UUID
     task = await get_task(db, task_id)
     full_task_id = task["id"] if task else task_id
     await db.execute(
@@ -155,36 +218,6 @@ async def get_task_context(db: aiosqlite.Connection, task_id: str) -> dict[str, 
     ) as cur:
         comments = [dict(r) async for r in cur]
     return {"task": task, "runs": runs, "transitions": transitions, "comments": comments}
-
-
-async def insert_approval(db: aiosqlite.Connection, *, id: str,
-                           task_id: str = "", requested_by: str,
-                           reason: str, context: str = "") -> None:
-    now = time.time()
-    await db.execute(
-        "INSERT INTO approvals (id, task_id, requested_by, reason, context, requested_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (id, task_id or None, requested_by, reason, context or None, now),
-    )
-    await db.commit()
-
-
-async def respond_approval(db: aiosqlite.Connection, *, approval_id: str,
-                            status: str, response_note: str = "") -> None:
-    now = time.time()
-    await db.execute(
-        "UPDATE approvals SET status = ?, response_note = ?, responded_at = ? "
-        "WHERE id = ? OR id LIKE ?",
-        (status, response_note or None, now, approval_id, f"{approval_id}%"),
-    )
-    await db.commit()
-
-
-async def list_approvals(db: aiosqlite.Connection, status: str = "pending") -> list[dict]:
-    async with db.execute(
-        "SELECT * FROM approvals WHERE status = ? ORDER BY requested_at DESC", (status,)
-    ) as cur:
-        return [dict(r) async for r in cur]
 
 
 async def get_daily_sync(db: aiosqlite.Connection, date: str) -> dict[str, Any]:

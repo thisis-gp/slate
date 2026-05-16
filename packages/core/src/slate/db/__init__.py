@@ -4,7 +4,7 @@ from .queries import (
     insert_task, get_task, list_tasks, update_task_state,
     insert_agent_run, get_task_context,
     insert_session, end_session,
-    insert_approval, respond_approval, list_approvals,
+    add_comment, list_comments,
     get_daily_sync,
 )
 
@@ -14,6 +14,6 @@ __all__ = [
     "insert_task", "get_task", "list_tasks", "update_task_state",
     "insert_agent_run", "get_task_context",
     "insert_session", "end_session",
-    "insert_approval", "respond_approval", "list_approvals",
+    "add_comment", "list_comments",
     "get_daily_sync",
 ]
