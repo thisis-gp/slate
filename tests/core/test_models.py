@@ -1,13 +1,13 @@
 import pytest
 from slate.models import (
     Project, Task, TaskState, TaskType, TaskPriority,
-    Session, AgentRun, Approval, ApprovalStatus, StateTransition
+    Session, AgentRun, StateTransition
 )
 
 def test_task_state_values():
     assert TaskState.TODO == "todo"
-    assert TaskState.INVESTIGATING == "investigating"
-    assert TaskState.IMPLEMENTING == "implementing"
+    assert TaskState.IN_PROGRESS == "in_progress"
+    assert TaskState.ON_HOLD == "on_hold"
     assert TaskState.CODE_REVIEW == "code_review"
     assert TaskState.QA == "qa"
     assert TaskState.READY_TO_MERGE == "ready_to_merge"
@@ -25,7 +25,20 @@ def test_task_defaults():
     assert t.priority == TaskPriority.MEDIUM
     assert t.type == TaskType.FEATURE
 
-def test_approval_status_values():
-    assert ApprovalStatus.PENDING == "pending"
-    assert ApprovalStatus.APPROVED == "approved"
-    assert ApprovalStatus.REJECTED == "rejected"
+def test_project_key_field():
+    p = Project(id="p1", name="My Project", key="MP")
+    assert p.key == "MP"
+
+def test_task_new_fields():
+    t = Task(id="t1", project_id="p1", title="Fix bug", created_by="human",
+             number=42, reporter="alice", story_points=5,
+             labels='["auth","backend"]', links='[{"url":"http://x","label":"doc","type":"doc"}]')
+    assert t.number == 42
+    assert t.reporter == "alice"
+    assert t.story_points == 5
+    assert t.labels == '["auth","backend"]'
+
+def test_state_transition_new_assignee():
+    st = StateTransition(task_id="t1", to_state="in_progress", changed_by="alice",
+                         new_assignee="bob")
+    assert st.new_assignee == "bob"

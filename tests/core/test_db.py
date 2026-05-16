@@ -12,7 +12,7 @@ async def test_schema_creates_all_tables():
             tables = {row[0] async for row in cur}
     expected = {
         "projects", "tasks", "state_transitions", "sprints",
-        "sessions", "agent_runs", "model_usage", "comments", "approvals"
+        "sessions", "agent_runs", "model_usage", "comments"
     }
     assert expected == tables
 
@@ -23,7 +23,6 @@ from slate.db.queries import (
     insert_task, get_task, list_tasks, update_task_state,
     insert_agent_run, get_task_context,
     insert_session, end_session,
-    insert_approval, respond_approval, list_approvals,
 )
 
 @pytest.fixture
@@ -69,19 +68,3 @@ async def test_get_task_context_includes_runs(db):
     assert len(ctx["runs"]) == 1
     assert ctx["runs"][0]["summary"] == "Researched Redis vs Memcached"
 
-@pytest.mark.asyncio
-async def test_approval_flow(db):
-    pid = str(uuid.uuid4())
-    await insert_project(db, id=pid, name="proj3")
-    tid = str(uuid.uuid4())
-    await insert_task(db, id=tid, project_id=pid, title="Deploy to prod")
-    aid = str(uuid.uuid4())
-    await insert_approval(db, id=aid, task_id=tid,
-                          requested_by="orchestrator",
-                          reason="Ready to deploy — approve?")
-    pending = await list_approvals(db, status="pending")
-    assert any(a["id"] == aid for a in pending)
-    await respond_approval(db, approval_id=aid, status="approved",
-                           response_note="Go ahead")
-    pending = await list_approvals(db, status="pending")
-    assert not any(a["id"] == aid for a in pending)

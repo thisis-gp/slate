@@ -55,22 +55,6 @@ async def test_log_run(client):
     assert r3.status_code == 201
 
 @pytest.mark.asyncio
-async def test_approval_flow(client):
-    r = await client.post("/projects", json={"name": "appr-proj"})
-    pid = r.json()["id"]
-    r2 = await client.post("/tasks", json={"project_id": pid, "title": "Deploy", "created_by": "human"})
-    tid = r2.json()["id"]
-    r3 = await client.post("/approvals", json={
-        "task_id": tid, "requested_by": "orchestrator", "reason": "Ready to deploy?"
-    })
-    assert r3.status_code == 201
-    aid = r3.json()["id"]
-    r4 = await client.get("/approvals?status=pending")
-    assert any(a["id"] == aid for a in r4.json())
-    r5 = await client.post(f"/approvals/{aid}/respond", json={"status": "approved"})
-    assert r5.status_code == 200
-
-@pytest.mark.asyncio
 async def test_sync_daily(client):
     r = await client.get("/sync/daily")
     assert r.status_code == 200

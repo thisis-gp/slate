@@ -6,8 +6,8 @@ from pydantic import BaseModel, field_validator
 
 class TaskState(str, Enum):
     TODO = "todo"
-    INVESTIGATING = "investigating"
-    IMPLEMENTING = "implementing"
+    IN_PROGRESS = "in_progress"
+    ON_HOLD = "on_hold"
     CODE_REVIEW = "code_review"
     QA = "qa"
     READY_TO_MERGE = "ready_to_merge"
@@ -44,15 +44,10 @@ class RunStatus(str, Enum):
     IN_PROGRESS = "in_progress"
 
 
-class ApprovalStatus(str, Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
 class Project(BaseModel):
     id: str
     name: str
+    key: Optional[str] = None
     description: Optional[str] = None
     status: str = "active"
     created_at: Optional[float] = None
@@ -82,13 +77,18 @@ class Task(BaseModel):
     project_id: str
     parent_task_id: Optional[str] = None
     sprint_id: Optional[str] = None
+    number: Optional[int] = None
     title: str
     description: Optional[str] = None
     type: TaskType = TaskType.FEATURE
     state: TaskState = TaskState.TODO
     priority: TaskPriority = TaskPriority.MEDIUM
     created_by: str = "human"
+    reporter: Optional[str] = None
     assigned_to: Optional[str] = None
+    story_points: Optional[int] = None
+    labels: Optional[str] = None
+    links: Optional[str] = None
     created_at: Optional[float] = None
     updated_at: Optional[float] = None
 
@@ -99,6 +99,7 @@ class StateTransition(BaseModel):
     from_state: Optional[str] = None
     to_state: str
     changed_by: str
+    new_assignee: Optional[str] = None
     reason: Optional[str] = None
     ts: Optional[float] = None
 
@@ -150,15 +151,3 @@ class Comment(BaseModel):
     author_type: str = "human"
     body: str
     ts: Optional[float] = None
-
-
-class Approval(BaseModel):
-    id: str
-    task_id: Optional[str] = None
-    requested_by: str
-    reason: str
-    context: Optional[str] = None
-    status: ApprovalStatus = ApprovalStatus.PENDING
-    response_note: Optional[str] = None
-    requested_at: Optional[float] = None
-    responded_at: Optional[float] = None

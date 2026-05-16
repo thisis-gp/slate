@@ -4,6 +4,7 @@ DDL = """
 CREATE TABLE IF NOT EXISTS projects (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
+    key         TEXT UNIQUE,
     description TEXT,
     status      TEXT NOT NULL DEFAULT 'active',
     created_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
@@ -26,25 +27,31 @@ CREATE TABLE IF NOT EXISTS tasks (
     project_id     TEXT NOT NULL REFERENCES projects(id),
     parent_task_id TEXT REFERENCES tasks(id),
     sprint_id      TEXT REFERENCES sprints(id),
+    number         INTEGER,
     title          TEXT NOT NULL,
     description    TEXT,
     type           TEXT NOT NULL DEFAULT 'feature',
     state          TEXT NOT NULL DEFAULT 'todo',
     priority       TEXT NOT NULL DEFAULT 'medium',
     created_by     TEXT NOT NULL DEFAULT 'human',
+    reporter       TEXT,
     assigned_to    TEXT,
+    story_points   INTEGER,
+    labels         TEXT,
+    links          TEXT,
     created_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
     updated_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
 CREATE TABLE IF NOT EXISTS state_transitions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id    TEXT NOT NULL REFERENCES tasks(id),
-    from_state TEXT,
-    to_state   TEXT NOT NULL,
-    changed_by TEXT NOT NULL,
-    reason     TEXT,
-    ts         REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      TEXT NOT NULL REFERENCES tasks(id),
+    from_state   TEXT,
+    to_state     TEXT NOT NULL,
+    changed_by   TEXT NOT NULL,
+    new_assignee TEXT,
+    reason       TEXT,
+    ts           REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -96,31 +103,36 @@ CREATE TABLE IF NOT EXISTS comments (
     ts          REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
-CREATE TABLE IF NOT EXISTS approvals (
-    id            TEXT PRIMARY KEY,
-    task_id       TEXT REFERENCES tasks(id),
-    requested_by  TEXT NOT NULL,
-    reason        TEXT NOT NULL,
-    context       TEXT,
-    status        TEXT NOT NULL DEFAULT 'pending',
-    response_note TEXT,
-    requested_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
-    responded_at  REAL
-);
-
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent     ON tasks(parent_task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_number ON tasks(project_id, number);
 CREATE INDEX IF NOT EXISTS idx_runs_task        ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_session     ON agent_runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent   ON sessions(agent_name);
 CREATE INDEX IF NOT EXISTS idx_transitions_task ON state_transitions(task_id);
 CREATE INDEX IF NOT EXISTS idx_model_usage_run  ON model_usage(agent_run_id);
-CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 """
+
+MIGRATIONS = [
+    "ALTER TABLE projects ADD COLUMN key TEXT",
+    "ALTER TABLE tasks ADD COLUMN number INTEGER",
+    "ALTER TABLE tasks ADD COLUMN reporter TEXT",
+    "ALTER TABLE tasks ADD COLUMN story_points INTEGER",
+    "ALTER TABLE tasks ADD COLUMN labels TEXT",
+    "ALTER TABLE tasks ADD COLUMN links TEXT",
+    "ALTER TABLE state_transitions ADD COLUMN new_assignee TEXT",
+]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:
     await conn.executescript(DDL)
     await conn.commit()
+    # Run migrations safely (ignore "duplicate column" errors)
+    for sql in MIGRATIONS:
+        try:
+            await conn.execute(sql)
+            await conn.commit()
+        except Exception:
+            pass  # column already exists
