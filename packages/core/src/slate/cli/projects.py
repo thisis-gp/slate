@@ -20,14 +20,16 @@ def _db_path() -> Path:
 def create_project(
     name: str = typer.Argument(..., help="Project name"),
     description: str = typer.Option("", "--desc", "-d"),
+    key: str = typer.Option("", "--key", "-k", help="Short uppercase project key e.g. BX"),
 ):
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
             db.row_factory = aiosqlite.Row
             await apply_schema(db)
             pid = str(uuid.uuid4())
-            await insert_project(db, id=pid, name=name, description=description)
-            console.print(f"[green]Created project[/] [bold]{name}[/] ({pid})")
+            await insert_project(db, id=pid, name=name, description=description, key=key)
+            key_display = f" [{key.upper()}]" if key else ""
+            console.print(f"[green]Created project[/] [bold]{name}[/]{key_display} ({pid})")
     asyncio.run(_run())
 
 @app.command("list")
@@ -37,8 +39,8 @@ def list_project():
             db.row_factory = aiosqlite.Row
             await apply_schema(db)
             projects = await list_projects(db)
-        table = Table("ID", "Name", "Description", "Status")
+        table = Table("Key", "ID", "Name", "Description", "Status")
         for p in projects:
-            table.add_row(p["id"][:8], p["name"], p["description"] or "", p["status"])
+            table.add_row(p["key"] or "-", p["id"][:8], p["name"], p["description"] or "", p["status"])
         console.print(table)
     asyncio.run(_run())
