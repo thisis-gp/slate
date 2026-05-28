@@ -29,6 +29,7 @@ def create_task(
     parent: str = typer.Option("", "--parent"),
     points: int = typer.Option(0, "--points"),
     labels: str = typer.Option("", "--labels", help="Comma-separated e.g. auth,backend"),
+    jira: str = typer.Option("", "--jira", help="Jira issue key e.g. PROJ-123"),
 ):
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
@@ -40,8 +41,9 @@ def create_task(
                               description=description, type=type, priority=priority,
                               assigned_to=assigned_to, reporter=reporter,
                               parent_task_id=parent, story_points=points,
-                              labels=labels_json)
-            console.print(f"[green]Created task[/] [bold]{title}[/] ({tid[:8]})")
+                              labels=labels_json, jira_issue_key=jira)
+            jira_note = f" linked to [cyan]{jira.upper()}[/]" if jira else ""
+            console.print(f"[green]Created task[/] [bold]{title}[/] ({tid[:8]}){jira_note}")
     asyncio.run(_run())
 
 @app.command("list")
@@ -58,13 +60,14 @@ def list_task(
             # Build project key map
             async with db.execute("SELECT id, key FROM projects") as cur:
                 proj_keys = {r["id"]: r["key"] or "" async for r in cur}
-        table = Table("Ticket", "ID", "Title", "State", "Priority", "Assigned To", "Pts")
+        table = Table("Ticket", "ID", "Jira", "Title", "State", "Priority", "Assigned To", "Pts")
         for t in tasks:
             key = proj_keys.get(t["project_id"], "")
             num = t["number"] or ""
             ticket = f"{key}-{num}" if key and num else t["id"][:8]
             pts = str(t["story_points"]) if t["story_points"] else "-"
-            table.add_row(ticket, t["id"][:8], t["title"], t["state"],
+            jira_key = t.get("jira_issue_key") or "-"
+            table.add_row(ticket, t["id"][:8], jira_key, t["title"], t["state"],
                           t["priority"], t["assigned_to"] or "-", pts)
         console.print(table)
     asyncio.run(_run())
