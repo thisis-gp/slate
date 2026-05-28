@@ -12,10 +12,12 @@ async def test_jira_configure_and_status(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["sync_time"] == "09:00"
+    assert "api_token" not in data  # token must not leak in response
 
     resp = await client.get("/jira/status")
     assert resp.status_code == 200
     assert resp.json()["base_url"] == "https://myorg.atlassian.net"
+    assert "api_token" not in resp.json()  # token must not leak in response
 
 
 @pytest.mark.asyncio

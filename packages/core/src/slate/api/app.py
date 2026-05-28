@@ -30,17 +30,17 @@ def create_app() -> FastAPI:
             await apply_schema(conn)
             app.state.db = conn
 
-        scheduler_task = None
+        app.state.scheduler_task = None
         config = await get_jira_config(app.state.db)
         if config and config.get("enabled"):
-            scheduler_task = asyncio.create_task(
+            app.state.scheduler_task = asyncio.create_task(
                 run_scheduler(config["sync_time"], DB_PATH)
             )
 
         yield
 
-        if scheduler_task:
-            scheduler_task.cancel()
+        if app.state.scheduler_task:
+            app.state.scheduler_task.cancel()
         if hasattr(app.state, "db") and app.state.db:
             await app.state.db.close()
 
