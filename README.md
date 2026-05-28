@@ -138,3 +138,67 @@ docker-compose up
 ```
 
 Runs the API server and UI together. API on port `7331`, UI on port `80`.
+
+---
+
+## Jira Integration
+
+Slate can push task status and agent run worklogs to linked Jira issues on a daily schedule.
+
+**Setup:**
+```bash
+slate jira configure \
+  --url https://myorg.atlassian.net \
+  --email your@email.com \
+  --token <your-atlassian-api-token> \
+  --sync-time 09:00   # or 21:00 for evening
+```
+
+**Link a task to a Jira issue:**
+```bash
+# At creation time:
+slate task create "Fix login bug" --project MP --jira PROJ-123
+
+# Or link an existing task:
+slate jira link MP-4 PROJ-123
+```
+
+**Manual sync:**
+```bash
+slate jira sync
+```
+
+**View sync status and approval-needed items:**
+```bash
+slate jira status
+```
+
+**What gets synced (Slate → Jira only):**
+- Task state → Jira workflow transition
+- Agent run worklogs → Jira worklog entries (time spent + summary)
+
+When a Jira transition isn't available in your workflow, Slate logs it as `approval_needed` instead of failing. Run `slate jira status` to see what needs manual action.
+
+**Default state map:**
+
+| Slate state | Jira status |
+|---|---|
+| `todo` | To Do |
+| `in_progress` / `investigating` / `implementing` | In Progress |
+| `on_hold` | On Hold |
+| `code_review` | In Review |
+| `qa` | Testing |
+| `ready_to_merge` | Ready to Merge |
+| `done` | Done |
+| `blocked` | Blocked |
+| `cancelled` | Cancelled |
+
+Override with `--state-map '{"done":"Completed"}'` in `slate jira configure`.
+
+**API endpoints:**
+```
+POST  /jira/configure
+GET   /jira/status
+POST  /jira/sync
+GET   /jira/sync-log
+```
