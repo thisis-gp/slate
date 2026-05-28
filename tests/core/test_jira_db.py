@@ -47,6 +47,7 @@ async def test_upsert_and_get_jira_config(db):
     cfg = await get_jira_config(db)
     assert cfg["base_url"] == "https://myorg.atlassian.net"
     assert cfg["email"] == "dev@myorg.com"
+    assert cfg["api_token"] == "secret123"
     assert cfg["sync_time"] == "09:00"
     assert cfg["enabled"] == 1
 
@@ -74,6 +75,23 @@ async def test_list_tasks_with_jira_only_returns_linked(db, project_and_task):
     tasks = await list_tasks_with_jira(db)
     assert len(tasks) == 1
     assert tasks[0]["jira_issue_key"] == "PROJ-42"
+
+@pytest.mark.asyncio
+async def test_get_unsynced_runs_scoped_to_jira_key(db, project_and_task):
+    pid, tid = project_and_task
+    rid = str(uuid.uuid4())
+    await insert_agent_run(db, id=rid, task_id=tid, agent_name="claude",
+                           tool="claude-code", summary="Run for PROJ-1")
+    # Mark as synced for PROJ-1
+    await insert_jira_sync_log(db, task_id=tid, jira_key="PROJ-1",
+                                action="worklog", status="ok", run_id=rid)
+    # Should still appear as unsynced for PROJ-2
+    runs = await get_unsynced_runs(db, tid, "PROJ-2")
+    assert len(runs) == 1
+    assert runs[0]["id"] == rid
+    # Should NOT appear for PROJ-1
+    runs_proj1 = await get_unsynced_runs(db, tid, "PROJ-1")
+    assert len(runs_proj1) == 0
 
 @pytest.mark.asyncio
 async def test_get_unsynced_runs_excludes_already_synced(db, project_and_task):

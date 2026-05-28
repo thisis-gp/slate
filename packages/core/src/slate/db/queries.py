@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+import uuid as _uuid
 import aiosqlite
 from typing import Any, Optional
 
@@ -324,9 +325,6 @@ async def get_sprint_tasks(db, sprint_id: str) -> list[dict]:
         return [dict(r) async for r in cur]
 
 
-import uuid as _uuid
-
-
 async def upsert_jira_config(
     db: aiosqlite.Connection, *,
     base_url: str, email: str, api_token: str,
@@ -372,25 +370,29 @@ async def insert_jira_sync_log(
     task_id: str, jira_key: str, action: str, status: str,
     detail: str = "", run_id: str = "",
 ) -> None:
+    task = await get_task(db, task_id)
+    full_task_id = task["id"] if task else task_id
     now = time.time()
     await db.execute(
         "INSERT INTO jira_sync_log (id, task_id, jira_key, run_id, action, status, detail, synced_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (str(_uuid.uuid4()), task_id, jira_key, run_id or None, action, status, detail or None, now),
+        (str(_uuid.uuid4()), full_task_id, jira_key, run_id or None, action, status, detail or None, now),
     )
     await db.commit()
 
 
 async def get_unsynced_runs(db: aiosqlite.Connection, task_id: str, jira_key: str) -> list[dict]:
+    task = await get_task(db, task_id)
+    full_task_id = task["id"] if task else task_id
     async with db.execute(
         """SELECT ar.* FROM agent_runs ar
            WHERE ar.task_id = ?
            AND NOT EXISTS (
                SELECT 1 FROM jira_sync_log jsl
-               WHERE jsl.run_id = ar.id AND jsl.action = 'worklog' AND jsl.status = 'ok'
+               WHERE jsl.run_id = ar.id AND jsl.jira_key = ? AND jsl.action = 'worklog' AND jsl.status = 'ok'
            )
            ORDER BY ar.started_at ASC""",
-        (task_id,),
+        (full_task_id, jira_key),
     ) as cur:
         return [dict(r) async for r in cur]
 
