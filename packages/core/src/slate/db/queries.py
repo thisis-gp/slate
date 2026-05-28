@@ -43,7 +43,7 @@ async def insert_task(db: aiosqlite.Connection, *, id: str, project_id: str,
                        reporter: str = "", assigned_to: str = "",
                        parent_task_id: str = "", sprint_id: str = "",
                        story_points: int = 0, labels: str = "",
-                       links: str = "") -> None:
+                       links: str = "", jira_issue_key: str = "") -> None:
     now = time.time()
     # Resolve project to full ID if a key was passed (e.g. "BX")
     proj = await get_project(db, project_id)
@@ -57,11 +57,12 @@ async def insert_task(db: aiosqlite.Connection, *, id: str, project_id: str,
     await db.execute(
         "INSERT INTO tasks (id, project_id, parent_task_id, sprint_id, number, title, "
         "description, type, state, priority, created_by, reporter, assigned_to, "
-        "story_points, labels, links, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "story_points, labels, links, jira_issue_key, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (id, full_project_id, parent_task_id or None, sprint_id or None, number,
          title, description, type, priority, created_by, reporter or None,
-         assigned_to or None, story_points or None, labels or None, links or None, now, now),
+         assigned_to or None, story_points or None, labels or None, links or None,
+         jira_issue_key.upper() if jira_issue_key else None, now, now),
     )
     await db.execute(
         "INSERT INTO state_transitions (task_id, from_state, to_state, changed_by, ts) "
@@ -319,5 +320,91 @@ async def get_sprint_tasks(db, sprint_id: str) -> list[dict]:
     full_id = sprint["id"] if sprint else sprint_id
     async with db.execute(
         "SELECT * FROM tasks WHERE sprint_id = ? ORDER BY created_at ASC", (full_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+import uuid as _uuid
+
+
+async def upsert_jira_config(
+    db: aiosqlite.Connection, *,
+    base_url: str, email: str, api_token: str,
+    sync_time: str = "09:00", state_map: str = "", enabled: bool = True,
+) -> None:
+    await db.execute(
+        "INSERT INTO jira_config (id, base_url, email, api_token, sync_time, state_map, enabled) "
+        "VALUES (1, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET base_url=excluded.base_url, email=excluded.email, "
+        "api_token=excluded.api_token, sync_time=excluded.sync_time, "
+        "state_map=excluded.state_map, enabled=excluded.enabled",
+        (base_url, email, api_token, sync_time, state_map or None, 1 if enabled else 0),
+    )
+    await db.commit()
+
+
+async def get_jira_config(db: aiosqlite.Connection) -> Optional[dict]:
+    async with db.execute("SELECT * FROM jira_config WHERE id = 1") as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def update_task_jira_key(db: aiosqlite.Connection, *, task_id: str, jira_key: str) -> None:
+    task = await get_task(db, task_id)
+    full_id = task["id"] if task else task_id
+    now = time.time()
+    await db.execute(
+        "UPDATE tasks SET jira_issue_key = ?, updated_at = ? WHERE id = ?",
+        (jira_key.upper(), now, full_id),
+    )
+    await db.commit()
+
+
+async def list_tasks_with_jira(db: aiosqlite.Connection) -> list[dict]:
+    async with db.execute(
+        "SELECT * FROM tasks WHERE jira_issue_key IS NOT NULL ORDER BY created_at ASC"
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_jira_sync_log(
+    db: aiosqlite.Connection, *,
+    task_id: str, jira_key: str, action: str, status: str,
+    detail: str = "", run_id: str = "",
+) -> None:
+    now = time.time()
+    await db.execute(
+        "INSERT INTO jira_sync_log (id, task_id, jira_key, run_id, action, status, detail, synced_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (str(_uuid.uuid4()), task_id, jira_key, run_id or None, action, status, detail or None, now),
+    )
+    await db.commit()
+
+
+async def get_unsynced_runs(db: aiosqlite.Connection, task_id: str, jira_key: str) -> list[dict]:
+    async with db.execute(
+        """SELECT ar.* FROM agent_runs ar
+           WHERE ar.task_id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM jira_sync_log jsl
+               WHERE jsl.run_id = ar.id AND jsl.action = 'worklog' AND jsl.status = 'ok'
+           )
+           ORDER BY ar.started_at ASC""",
+        (task_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def list_jira_sync_log(db: aiosqlite.Connection, task_id: str = "", limit: int = 50) -> list[dict]:
+    if task_id:
+        task = await get_task(db, task_id)
+        full_id = task["id"] if task else task_id
+        async with db.execute(
+            "SELECT * FROM jira_sync_log WHERE task_id = ? ORDER BY synced_at DESC LIMIT ?",
+            (full_id, limit),
+        ) as cur:
+            return [dict(r) async for r in cur]
+    async with db.execute(
+        "SELECT * FROM jira_sync_log ORDER BY synced_at DESC LIMIT ?", (limit,)
     ) as cur:
         return [dict(r) async for r in cur]

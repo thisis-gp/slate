@@ -105,6 +105,27 @@ CREATE TABLE IF NOT EXISTS comments (
     ts          REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
+CREATE TABLE IF NOT EXISTS jira_config (
+    id          INTEGER PRIMARY KEY DEFAULT 1,
+    base_url    TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    api_token   TEXT NOT NULL,
+    sync_time   TEXT NOT NULL DEFAULT '09:00',
+    state_map   TEXT,
+    enabled     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS jira_sync_log (
+    id          TEXT PRIMARY KEY,
+    task_id     TEXT NOT NULL REFERENCES tasks(id),
+    jira_key    TEXT NOT NULL,
+    run_id      TEXT REFERENCES agent_runs(id),
+    action      TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    detail      TEXT,
+    synced_at   REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
@@ -115,6 +136,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent   ON sessions(agent_name);
 CREATE INDEX IF NOT EXISTS idx_transitions_task ON state_transitions(task_id);
 CREATE INDEX IF NOT EXISTS idx_model_usage_run  ON model_usage(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_jira_sync_log_task ON jira_sync_log(task_id);
+CREATE INDEX IF NOT EXISTS idx_jira_sync_log_run  ON jira_sync_log(run_id);
 """
 
 MIGRATIONS = [
@@ -128,6 +151,7 @@ MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_number ON tasks(project_id, number)",
     "ALTER TABLE agent_runs ADD COLUMN commit_sha TEXT",
     "ALTER TABLE agent_runs ADD COLUMN commit_message TEXT",
+    "ALTER TABLE tasks ADD COLUMN jira_issue_key TEXT",
 ]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:

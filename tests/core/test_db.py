@@ -12,7 +12,8 @@ async def test_schema_creates_all_tables():
             tables = {row[0] async for row in cur}
     expected = {
         "projects", "tasks", "state_transitions", "sprints",
-        "sessions", "agent_runs", "model_usage", "comments"
+        "sessions", "agent_runs", "model_usage", "comments",
+        "jira_config", "jira_sync_log",
     }
     assert expected == tables
 
