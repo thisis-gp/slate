@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(curl -s http://localhost:7331/health)",
+      "Bash(curl -s http://localhost:7331/docs)",
+      "Bash(curl -s -X POST http://localhost:7331/projects -H 'Content-Type: application/json' -d '{\"name\":\"Slate E2E Test\",\"description\":\"Testing all Slate features end-to-end\"}')",
+      "Bash(python -m json.tool)",
+      "Bash(npm run *)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pytest tests/ -x -q)",
+      "Bash(git commit *)",
+      "Bash(python rebrand.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(bun run *)",
+      "Bash(git -C \"C:\\\\Users\\\\am400\\\\Desktop\\\\Projects\\\\openloom\" add packages/opencode/src/session/system.ts packages/opencode/src/session/prompt.ts packages/opencode/src/cli/cmd/run/memory.ts packages/opencode/src/cli/cmd/run/runtime.lifecycle.ts packages/opencode/src/agent/prompt/build.supplement.md packages/opencode/src/agent/prompt/plan.supplement.md packages/opencode/src/agent/prompt/general.supplement.md)",
+      "Bash(git -C \"C:\\\\Users\\\\am400\\\\Desktop\\\\Projects\\\\openloom\" status)",
+      "Bash(git -C \"C:\\\\Users\\\\am400\\\\Desktop\\\\Projects\\\\openloom\" add docs/model-research.md)",
+      "Bash(git -C 'C:\\\\Users\\\\am400\\\\Desktop\\\\Projects\\\\openloom' commit -m 'docs: add model research file with 2026 LLM landscape and Openloom agent recommendations *)",
+      "WebSearch"
+    ]
+  }
+}
