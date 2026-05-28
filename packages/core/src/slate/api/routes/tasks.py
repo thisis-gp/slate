@@ -21,6 +21,7 @@ class CreateTaskRequest(BaseModel):
     story_points: int = 0
     labels: str = ""   # JSON array string e.g. '["auth","backend"]'
     links: str = ""    # JSON array string e.g. '[{"url":"...","label":"...","type":"doc"}]'
+    jira_issue_key: str = ""
 
 class MoveTaskRequest(BaseModel):
     to_state: str
