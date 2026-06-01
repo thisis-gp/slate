@@ -14,8 +14,9 @@ from slate.api.routes.sessions import router as sessions_router
 from slate.api.routes.sync import router as sync_router
 from slate.api.routes.sprints import router as sprints_router
 from slate.api.routes.jira import router as jira_router
+from slate.api.routes.worklogs import router as worklogs_router
 from slate.db.queries import get_jira_config
-from slate.jira.scheduler import run_scheduler
+from slate.jira.scheduler import run_scheduler, run_worklog_scheduler, run_approval_scheduler
 
 DB_PATH = Path.home() / ".slate" / "db.sqlite"
 
@@ -31,16 +32,21 @@ def create_app() -> FastAPI:
             app.state.db = conn
 
         app.state.scheduler_task = None
+        app.state.worklog_scheduler_task = None
         config = await get_jira_config(app.state.db)
         if config and config.get("enabled"):
+            # Single daily approval-gated staging — builds a PENDING batch and
+            # notifies; pushing to Jira requires explicit human approval.
             app.state.scheduler_task = asyncio.create_task(
-                run_scheduler(config["sync_time"], DB_PATH)
+                run_approval_scheduler(config["sync_time"], DB_PATH)
             )
 
         yield
 
         if app.state.scheduler_task:
             app.state.scheduler_task.cancel()
+        if app.state.worklog_scheduler_task:
+            app.state.worklog_scheduler_task.cancel()
         if hasattr(app.state, "db") and app.state.db:
             await app.state.db.close()
 
@@ -55,4 +61,5 @@ def create_app() -> FastAPI:
     app.include_router(sync_router)
     app.include_router(sprints_router)
     app.include_router(jira_router)
+    app.include_router(worklogs_router)
     return app

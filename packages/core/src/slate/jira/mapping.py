@@ -1,6 +1,38 @@
 from __future__ import annotations
 import json
+import os
+import re
 from datetime import datetime, timezone
+
+_JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+
+def allowed_jira_prefixes() -> list[str]:
+    """Allowed project prefixes from JIRA_ALLOWED_PREFIXES (comma-separated).
+
+    Empty list means "allow any valid key".
+    """
+    raw = os.getenv("JIRA_ALLOWED_PREFIXES", "")
+    return [p.strip().upper() for p in raw.split(",") if p.strip()]
+
+
+def normalize_jira_key(key: str) -> str:
+    """Strip, remove internal spaces, uppercase a Jira key."""
+    return "".join((key or "").split()).upper()
+
+
+def is_allowed_jira_key(key: str) -> bool:
+    """True iff key is a valid Jira key matching an allowed project prefix.
+
+    Empty allowlist permits any syntactically valid key.
+    """
+    norm = normalize_jira_key(key)
+    if not _JIRA_KEY_RE.match(norm):
+        return False
+    prefixes = allowed_jira_prefixes()
+    if not prefixes:
+        return True
+    return norm.rsplit("-", 1)[0] in prefixes
 
 DEFAULT_STATE_MAP: dict[str, str] = {
     "todo": "To Do",

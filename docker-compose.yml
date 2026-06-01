@@ -1,33 +1,22 @@
 services:
-  slate-api:
+  slate:
     build:
       context: .
-      target: api
-    container_name: slate-api
+      dockerfile: Dockerfile.allinone
+    container_name: slate
+    env_file:
+      - .env
     ports:
-      - "7331:8000"
+      - "7331:80"
     volumes:
       - slate-data:/root/.slate
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "uv", "run", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
-
-  slate-ui:
-    build:
-      context: .
-      target: ui
-    container_name: slate-ui
-    ports:
-      - "3000:80"
-    depends_on:
-      slate-api:
-        condition: service_healthy
-    restart: unless-stopped
+      start_period: 15s
 
 volumes:
   slate-data:

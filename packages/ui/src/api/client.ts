@@ -63,6 +63,30 @@ export interface Sprint {
   status: string; created_at: number;
 }
 
+export interface PendingIssue {
+  jira_key: string; task_id: string;
+  current_state?: string; target_status?: string;
+  worklog_ids: string[]; entries: string[];
+  total_seconds: number; started_ts: number;
+  summary: string; summary_provider?: string;
+}
+export interface PendingBatch { issues: PendingIssue[] }
+export interface PendingResponse {
+  pending?: boolean | null;
+  id?: string; pending_id?: string | null; status?: string;
+  created_at?: number; summary_provider?: string;
+  batch?: PendingBatch; reason?: string;
+  unlinked_count?: number;
+}
+export interface JiraStatus {
+  base_url?: string; email?: string; sync_time?: string; enabled?: boolean; state_map?: string;
+}
+export interface ApproveResult {
+  pushed: number; failed: number;
+  results: Array<{ jira_key: string; status: string; detail?: string }>;
+  error?: string;
+}
+
 export const api = {
   projects: {
     list: () => req<Project[]>("/projects"),
@@ -117,5 +141,13 @@ export const api = {
     complete: (id: string) => req<Sprint>(`/sprints/${id}/complete`, { method: "POST" }),
     assign: (sprintId: string, taskId: string) =>
       req<{ ok: boolean }>(`/sprints/${sprintId}/assign/${taskId}`, { method: "POST" }),
+  },
+  jira: {
+    status: () => req<JiraStatus>("/jira/status"),
+    pending: () => req<PendingResponse>("/jira/pending"),
+    preview: () => req<PendingResponse>("/jira/preview", { method: "POST" }),
+    approve: (id: string, exclude: string[] = []) =>
+      req<ApproveResult>(`/jira/pending/${id}/approve`, { method: "POST", body: JSON.stringify({ exclude }) }),
+    reject: (id: string) => req<{ rejected: boolean }>(`/jira/pending/${id}/reject`, { method: "POST" }),
   },
 };

@@ -37,7 +37,10 @@ class AddCommentRequest(BaseModel):
 @router.post("/tasks", status_code=201)
 async def create_task(body: CreateTaskRequest, request: Request):
     tid = str(uuid.uuid4())
-    await insert_task(request.app.state.db, id=tid, **body.model_dump())
+    try:
+        await insert_task(request.app.state.db, id=tid, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return await get_task(request.app.state.db, tid)
 
 @router.get("/tasks")

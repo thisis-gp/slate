@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     story_points   INTEGER,
     labels         TEXT,
     links          TEXT,
+    jira_issue_key TEXT,
     created_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
     updated_at     REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
@@ -105,12 +106,51 @@ CREATE TABLE IF NOT EXISTS comments (
     ts          REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
+CREATE TABLE IF NOT EXISTS worklogs (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id),
+    agent_run_id  TEXT REFERENCES agent_runs(id),
+    agent_name    TEXT NOT NULL,
+    tool          TEXT NOT NULL,
+    summary       TEXT NOT NULL,
+    time_spent_seconds INTEGER NOT NULL DEFAULT 0,
+    started_at    REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    synced_to_jira INTEGER NOT NULL DEFAULT 0,
+    jira_worklog_id TEXT,
+    synced_at     REAL,
+    created_at    REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT PRIMARY KEY,
+    type        TEXT NOT NULL,
+    task_id     TEXT REFERENCES tasks(id),
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    channel     TEXT NOT NULL DEFAULT 'console',
+    destination TEXT,
+    sent        INTEGER NOT NULL DEFAULT 0,
+    sent_at     REAL,
+    created_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS notification_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    condition   TEXT,
+    channel     TEXT NOT NULL DEFAULT 'webhook',
+    destination TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS jira_config (
     id          INTEGER PRIMARY KEY DEFAULT 1,
     base_url    TEXT NOT NULL,
     email       TEXT NOT NULL,
     api_token   TEXT NOT NULL,
     sync_time   TEXT NOT NULL DEFAULT '09:00',
+    worklog_sync_time TEXT NOT NULL DEFAULT '11:00',
     state_map   TEXT,
     enabled     INTEGER NOT NULL DEFAULT 1
 );
@@ -126,10 +166,21 @@ CREATE TABLE IF NOT EXISTS jira_sync_log (
     synced_at   REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
+CREATE TABLE IF NOT EXISTS jira_pending_sync (
+    id               TEXT PRIMARY KEY,
+    created_at       REAL DEFAULT (unixepoch('now', 'subsec')),
+    status           TEXT NOT NULL DEFAULT 'pending',
+    batch_json       TEXT NOT NULL,
+    summary_provider TEXT,
+    decided_at       REAL,
+    result_json      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent     ON tasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_jira       ON tasks(jira_issue_key);
 CREATE INDEX IF NOT EXISTS idx_runs_task        ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_session     ON agent_runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
@@ -138,6 +189,9 @@ CREATE INDEX IF NOT EXISTS idx_transitions_task ON state_transitions(task_id);
 CREATE INDEX IF NOT EXISTS idx_model_usage_run  ON model_usage(agent_run_id);
 CREATE INDEX IF NOT EXISTS idx_jira_sync_log_task ON jira_sync_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_jira_sync_log_run  ON jira_sync_log(run_id);
+CREATE INDEX IF NOT EXISTS idx_worklogs_task      ON worklogs(task_id);
+CREATE INDEX IF NOT EXISTS idx_worklogs_synced    ON worklogs(synced_to_jira);
+CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent);
 """
 
 MIGRATIONS = [
@@ -152,6 +206,15 @@ MIGRATIONS = [
     "ALTER TABLE agent_runs ADD COLUMN commit_sha TEXT",
     "ALTER TABLE agent_runs ADD COLUMN commit_message TEXT",
     "ALTER TABLE tasks ADD COLUMN jira_issue_key TEXT",
+    "ALTER TABLE jira_config ADD COLUMN worklog_sync_time TEXT NOT NULL DEFAULT '11:00'",
+    "CREATE TABLE IF NOT EXISTS worklogs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), agent_run_id TEXT REFERENCES agent_runs(id), agent_name TEXT NOT NULL, tool TEXT NOT NULL, summary TEXT NOT NULL, time_spent_seconds INTEGER NOT NULL DEFAULT 0, started_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')), synced_to_jira INTEGER NOT NULL DEFAULT 0, jira_worklog_id TEXT, synced_at REAL, created_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')))",
+    "CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, type TEXT NOT NULL, task_id TEXT REFERENCES tasks(id), title TEXT NOT NULL, body TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'console', destination TEXT, sent INTEGER NOT NULL DEFAULT 0, sent_at REAL, created_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')))",
+    "CREATE TABLE IF NOT EXISTS notification_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, event_type TEXT NOT NULL, condition TEXT, channel TEXT NOT NULL DEFAULT 'webhook', destination TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_jira ON tasks(jira_issue_key)",
+    "CREATE INDEX IF NOT EXISTS idx_worklogs_task ON worklogs(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_worklogs_synced ON worklogs(synced_to_jira)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent)",
+    "CREATE TABLE IF NOT EXISTS jira_pending_sync (id TEXT PRIMARY KEY, created_at REAL DEFAULT (unixepoch('now', 'subsec')), status TEXT NOT NULL DEFAULT 'pending', batch_json TEXT NOT NULL, summary_provider TEXT, decided_at REAL, result_json TEXT)",
 ]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:

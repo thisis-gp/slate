@@ -1,10 +1,18 @@
 from __future__ import annotations
+import json
+import uuid
 import aiosqlite
 from slate.jira.client import JiraClient
-from slate.jira.mapping import resolve_state_map, find_transition_id, format_worklog_started
+from slate.jira.mapping import (
+    resolve_state_map, find_transition_id, format_worklog_started, is_allowed_jira_key,
+)
+from slate.llm.summarize import summarize_worklog
 from slate.db.queries import (
     get_jira_config, list_tasks_with_jira, insert_jira_sync_log, get_unsynced_runs,
+    get_unsynced_worklogs, mark_worklog_synced, insert_notification,
+    insert_pending_sync, get_pending, set_pending_status, count_unlinked_worklogs,
 )
+from collections import defaultdict
 
 
 async def sync_all(db: aiosqlite.Connection) -> dict:
@@ -28,7 +36,7 @@ async def _sync_task(db, client: JiraClient, task: dict, state_map: dict) -> dic
         "task_id": task["id"],
         "jira_key": jira_key,
         "status": await _sync_status(db, client, task, state_map),
-        "worklogs": await _sync_worklogs(db, client, task["id"], jira_key),
+        "worklogs": await _sync_worklogs_legacy(db, client, task["id"], jira_key),
     }
 
 
@@ -60,7 +68,8 @@ async def _sync_status(db, client: JiraClient, task: dict, state_map: dict) -> d
         return {"error": str(e)}
 
 
-async def _sync_worklogs(db, client: JiraClient, task_id: str, jira_key: str) -> dict:
+async def _sync_worklogs_legacy(db, client: JiraClient, task_id: str, jira_key: str) -> dict:
+    """Legacy: sync individual agent_runs as worklogs."""
     runs = await get_unsynced_runs(db, task_id, jira_key)
     synced = 0
     for run in runs:
@@ -80,3 +89,265 @@ async def _sync_worklogs(db, client: JiraClient, task_id: str, jira_key: str) ->
             await insert_jira_sync_log(db, task_id=task_id, jira_key=jira_key,
                 action="worklog", status="error", detail=str(e), run_id=run["id"])
     return {"synced_worklogs": synced}
+
+
+async def sync_worklogs_all(db: aiosqlite.Connection) -> dict:
+    """New: sync all pending worklogs, aggregating by Jira issue."""
+    config = await get_jira_config(db)
+    if not config or not config.get("enabled"):
+        return {"skipped": True, "reason": "Jira not configured or disabled"}
+    client = JiraClient(
+        base_url=config["base_url"],
+        email=config["email"],
+        api_token=config["api_token"],
+    )
+
+    logs = await get_unsynced_worklogs(db)
+    if not logs:
+        return {"synced": 0, "failed": 0, "details": []}
+
+    by_jira = defaultdict(list)
+    for log in logs:
+        jira_key = log.get("jira_issue_key")
+        if jira_key:
+            by_jira[jira_key].append(log)
+
+    synced = 0
+    failed = 0
+    details = []
+
+    for jira_key, items in by_jira.items():
+        total_seconds = sum(w["time_spent_seconds"] for w in items)
+        total_mins = total_seconds // 60
+
+        summaries = []
+        for w in items:
+            summaries.append(f"[{w['tool']}] {w['agent_name']}: {w['summary']}")
+        combined_summary = "\n".join(summaries[:10])
+        if len(summaries) > 10:
+            combined_summary += f"\n... and {len(summaries) - 10} more entries"
+
+        started_ts = min(w["started_at"] for w in items)
+
+        try:
+            result = await client.add_worklog(
+                jira_key,
+                time_spent_seconds=max(60, total_seconds),
+                comment=combined_summary,
+                started=format_worklog_started(started_ts),
+            )
+            jira_wid = result.get("id", "")
+
+            for w in items:
+                await mark_worklog_synced(db, w["id"], jira_wid)
+                await insert_jira_sync_log(
+                    db, task_id=w["task_id"], jira_key=jira_key,
+                    action="worklog", status="ok",
+                    detail=f"Aggregated {len(items)} entries, {total_mins}m",
+                )
+
+            synced += 1
+            details.append({"jira_key": jira_key, "status": "ok", "entries": len(items), "minutes": total_mins})
+        except Exception as e:
+            failed += 1
+            details.append({"jira_key": jira_key, "status": "error", "error": str(e)[:200]})
+            for w in items:
+                await insert_jira_sync_log(
+                    db, task_id=w["task_id"], jira_key=jira_key,
+                    action="worklog", status="error",
+                    detail=str(e)[:200],
+                )
+
+    return {"synced": synced, "failed": failed, "details": details}
+
+
+# ── Approval-gated daily sync (build → summarize → stage → approve/reject) ─────
+
+async def build_batch(db: aiosqlite.Connection) -> dict:
+    """Build a pending sync batch (DB-only, no Jira API calls).
+
+    Groups unsynced worklogs by Jira issue and pairs each with the task's
+    current/target state. Returns ``{"issues": [...]}`` (or ``skipped``).
+    """
+    config = await get_jira_config(db)
+    if not config or not config.get("enabled"):
+        return {"issues": [], "skipped": True}
+
+    state_map = resolve_state_map(config.get("state_map"))
+
+    tasks = await list_tasks_with_jira(db)
+    by_key_task: dict[str, dict] = {}
+    for t in tasks:
+        key = t.get("jira_issue_key")
+        if key:
+            by_key_task[key] = t
+
+    worklogs = await get_unsynced_worklogs(db)
+    by_jira: dict[str, list[dict]] = defaultdict(list)
+    for w in worklogs:
+        key = w.get("jira_issue_key")
+        if key:
+            by_jira[key].append(w)
+
+    issues: list[dict] = []
+    for jira_key, items in by_jira.items():
+        # Defense in depth: never push to a non-allowed project.
+        if not is_allowed_jira_key(jira_key):
+            continue
+        task = by_key_task.get(jira_key, {})
+        current_state = task.get("state")
+        total_seconds = sum(w["time_spent_seconds"] for w in items)
+        entries = [f"[{w['tool']}] {w['agent_name']}: {w['summary']}" for w in items]
+        issues.append({
+            "jira_key": jira_key,
+            "task_id": task.get("id"),
+            "current_state": current_state,
+            "target_status": state_map.get(current_state) if current_state else None,
+            "worklog_ids": [w["id"] for w in items],
+            "entries": entries,
+            "total_seconds": total_seconds,
+            "started_ts": min(w["started_at"] for w in items),
+        })
+
+    return {"issues": issues, "unlinked_count": await count_unlinked_worklogs(db)}
+
+
+async def summarize_batch(batch: dict) -> tuple[dict, str]:
+    """LLM-summarize each issue's worklog entries. Returns (batch, provider)."""
+    overall_provider = "concat"
+    for issue in batch.get("issues", []):
+        entries = issue.get("entries") or []
+        if not entries:
+            continue
+        summary, provider = await summarize_worklog(
+            issue["jira_key"], entries, issue["total_seconds"] // 60
+        )
+        issue["summary"] = summary
+        issue["summary_provider"] = provider
+        if overall_provider == "concat" and provider != "concat":
+            overall_provider = provider
+    return batch, overall_provider
+
+
+async def prepare_pending(db: aiosqlite.Connection) -> dict:
+    """Build + summarize a batch and stage it pending human approval."""
+    batch = await build_batch(db)
+    issues = batch.get("issues", [])
+    if not issues:
+        return {
+            "pending_id": None,
+            "reason": "nothing to sync",
+            "unlinked_count": batch.get("unlinked_count", 0),
+        }
+
+    batch, provider = await summarize_batch(batch)
+    pending_id = str(uuid.uuid4())
+    await insert_pending_sync(
+        db, id=pending_id, batch_json=json.dumps(batch), summary_provider=provider
+    )
+
+    total_mins = sum(i["total_seconds"] for i in issues) // 60
+    await insert_notification(
+        db,
+        id=str(uuid.uuid4()),
+        type="jira_sync_approval",
+        title="Jira sync needs approval",
+        body=f"{len(issues)} issue(s), total {total_mins}m — review & approve",
+        channel="console",
+    )
+    return {"pending_id": pending_id, "batch": batch}
+
+
+async def approve_pending(
+    db: aiosqlite.Connection, pending_id: str, exclude: list[str] | None = None,
+) -> dict:
+    """Push an approved pending batch to Jira. NEVER called without approval."""
+    exclude = exclude or []
+    pending = await get_pending(db, pending_id)
+    if not pending:
+        return {"error": "pending batch not found"}
+    if pending["status"] != "pending":
+        return {"error": f"pending batch already {pending['status']}"}
+
+    batch = json.loads(pending["batch_json"])
+    config = await get_jira_config(db)
+    if not config or not config.get("enabled"):
+        return {"error": "Jira not configured or disabled"}
+    client = JiraClient(
+        base_url=config["base_url"],
+        email=config["email"],
+        api_token=config["api_token"],
+    )
+
+    results: list[dict] = []
+    pushed = 0
+    failed = 0
+
+    for issue in batch.get("issues", []):
+        jira_key = issue["jira_key"]
+        task_id = issue.get("task_id")
+        if jira_key in exclude:
+            results.append({"jira_key": jira_key, "status": "excluded"})
+            continue
+        result: dict = {"jira_key": jira_key}
+        try:
+            target_status = issue.get("target_status")
+            if target_status:
+                transitions = await client.get_transitions(jira_key)
+                tid = find_transition_id(transitions, target_status)
+                if tid:
+                    await client.transition_issue(jira_key, tid)
+                    await insert_jira_sync_log(
+                        db, task_id=task_id, jira_key=jira_key,
+                        action="transition", status="ok",
+                        detail=f"Transitioned to '{target_status}'",
+                    )
+                    result["transition"] = target_status
+                else:
+                    available = [t["to"]["name"] for t in transitions]
+                    await insert_jira_sync_log(
+                        db, task_id=task_id, jira_key=jira_key,
+                        action="transition", status="approval_needed",
+                        detail=f"Transition to '{target_status}' not available. Available: {available}",
+                    )
+                    result["transition"] = f"unavailable:{target_status}"
+
+            entries = issue.get("entries") or []
+            if entries:
+                total_seconds = issue["total_seconds"]
+                total_mins = total_seconds // 60
+                jira_result = await client.add_worklog(
+                    jira_key,
+                    time_spent_seconds=max(60, total_seconds),
+                    comment=issue.get("summary") or "",
+                    started=format_worklog_started(issue["started_ts"]),
+                )
+                jira_wid = jira_result.get("id", "")
+                for wid in issue.get("worklog_ids", []):
+                    await mark_worklog_synced(db, wid, jira_wid)
+                await insert_jira_sync_log(
+                    db, task_id=task_id, jira_key=jira_key,
+                    action="worklog", status="ok",
+                    detail=f"{len(entries)} entries, {total_mins}m",
+                )
+                result["worklog"] = {"entries": len(entries), "minutes": total_mins}
+
+            result["status"] = "ok"
+            pushed += 1
+        except Exception as e:  # noqa: BLE001
+            await insert_jira_sync_log(
+                db, task_id=task_id, jira_key=jira_key,
+                action="worklog", status="error", detail=str(e)[:200],
+            )
+            result["status"] = "error"
+            result["error"] = str(e)[:200]
+            failed += 1
+        results.append(result)
+
+    await set_pending_status(db, pending_id, "pushed", result_json=json.dumps(results))
+    return {"pushed": pushed, "failed": failed, "results": results}
+
+
+async def reject_pending(db: aiosqlite.Connection, pending_id: str) -> dict:
+    await set_pending_status(db, pending_id, "rejected")
+    return {"rejected": True}

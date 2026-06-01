@@ -31,6 +31,12 @@ def create_task(
     labels: str = typer.Option("", "--labels", help="Comma-separated e.g. auth,backend"),
     jira: str = typer.Option("", "--jira", help="Jira issue key e.g. PROJ-123"),
 ):
+    """Create a new task. If --jira is not provided, you will be prompted for it."""
+    # Interactive Jira prompt if not provided
+    if not jira:
+        jira_input = typer.prompt("Jira issue key (e.g. PROJ-123) or press Enter to skip", default="")
+        jira = jira_input.strip()
+
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
             db.row_factory = aiosqlite.Row
@@ -44,7 +50,11 @@ def create_task(
                               labels=labels_json, jira_issue_key=jira)
             jira_note = f" linked to [cyan]{jira.upper()}[/]" if jira else ""
             console.print(f"[green]Created task[/] [bold]{title}[/] ({tid[:8]}){jira_note}")
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1)
 
 @app.command("list")
 def list_task(
@@ -91,8 +101,10 @@ def show_task(task_id: str = typer.Argument(...)):
             except Exception:
                 labels_str = task["labels"]
         pts = str(task["story_points"]) if task.get("story_points") else "-"
+        jira_key = task.get("jira_issue_key") or "-"
         body = (
             f"[bold]{task['title']}[/]\n"
+            f"Jira: [cyan]{jira_key}[/]  "
             f"State: [yellow]{task['state']}[/]  Priority: {task['priority']}  "
             f"Type: {task['type']}  Points: {pts}\n"
             f"Assignee: {task['assigned_to'] or '-'}  Reporter: {task.get('reporter') or '-'}\n"
@@ -114,6 +126,12 @@ def show_task(task_id: str = typer.Argument(...)):
                 cost = f" ${r['cost_usd']:.4f}" if r.get("cost_usd") else ""
                 commit = f"\n    commit {r['commit_sha'][:8]} {r['commit_message'][:72]}" if r.get("commit_sha") else ""
                 console.print(f"  [{r['tool']}] {r['agent_name']}: {r['summary'][:80]}{cost}{commit}")
+        if ctx.get("worklogs"):
+            console.print("\n[bold]Worklogs:[/]")
+            for w in ctx["worklogs"]:
+                sync_status = "[green]synced[/]" if w.get("synced_to_jira") else "[yellow]pending[/]"
+                mins = w.get("time_spent_seconds", 0) // 60
+                console.print(f"  [{w['tool']}] {w['agent_name']}: {w['summary'][:60]} ({mins}m) {sync_status}")
         if ctx["comments"]:
             console.print("\n[bold]Comments:[/]")
             for c in ctx["comments"]:

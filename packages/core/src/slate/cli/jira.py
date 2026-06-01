@@ -116,4 +116,8 @@ def link(
             await apply_schema(db)
             await update_task_jira_key(db, task_id=task_id, jira_key=jira_key)
         console.print(f"[green]Linked[/] {task_id} → [bold]{jira_key.upper()}[/]")
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1)

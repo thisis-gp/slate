@@ -4,6 +4,7 @@ import ProjectList from "./components/ProjectList";
 import KanbanBoard from "./components/KanbanBoard";
 import TaskDetail from "./components/TaskDetail";
 import SyncReport from "./components/SyncReport";
+import JiraSync from "./components/JiraSync";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5000 } } });
 
@@ -19,6 +20,7 @@ export default function App() {
             {[
               { to: "/", label: "Projects", icon: "◈" },
               { to: "/sync", label: "Sync", icon: "◎" },
+              { to: "/jira", label: "Jira", icon: "⇄" },
             ].map(({ to, label, icon }) => (
               <NavLink
                 key={to}
@@ -41,6 +43,7 @@ export default function App() {
               <Route path="/projects/:id" element={<KanbanBoard />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
               <Route path="/sync" element={<SyncReport />} />
+              <Route path="/jira" element={<JiraSync />} />
             </Routes>
           </main>
         </div>
