@@ -13,11 +13,17 @@ from slate.db.queries import (
     get_jira_config, list_tasks_with_jira, insert_jira_sync_log, get_unsynced_runs,
     get_unsynced_worklogs, mark_worklog_synced, insert_notification,
     insert_pending_sync, get_pending, set_pending_status, count_unlinked_worklogs,
-    get_unsynced_worklogs_by_ids,
+    claim_worklogs_for_push, finalize_worklog_claims, release_worklog_claims,
+    release_stale_worklog_claims,
 )
 from collections import defaultdict
 
 SUMMARY_TIMEOUT_SECONDS = 8
+
+# Serializes approval pushes within this process so two concurrent requests
+# (e.g. a UI double-click) can't both enter the push loop. Cross-process safety
+# is handled by the DB-atomic claim in ``claim_worklogs_for_push``.
+_push_lock = asyncio.Lock()
 
 
 def _fallback_summary(entries: list[str]) -> str:
@@ -203,6 +209,9 @@ async def build_batch(db: aiosqlite.Connection) -> dict:
     if not config or not config.get("enabled"):
         return {"issues": [], "skipped": True}
 
+    # Recover any worklogs orphaned in the transient claim state by a crashed push.
+    await release_stale_worklog_claims(db)
+
     tasks = await list_tasks_with_jira(db)
     by_key_task: dict[str, dict] = {}
     for t in tasks:
@@ -310,27 +319,40 @@ async def approve_pending(
         api_token=config["api_token"],
     )
 
+    token = f"claiming:{pending_id}"
     results: list[dict] = []
     pushed = 0
     failed = 0
 
-    for issue in batch.get("issues", []):
-        jira_key = issue["jira_key"]
-        task_id = issue.get("task_id")
-        if jira_key in exclude:
-            for wid in issue.get("worklog_ids", []):
-                await mark_worklog_synced(db, wid, f"excluded:{pending_id}")
-            await insert_jira_sync_log(
-                db, task_id=task_id, jira_key=jira_key,
-                action="worklog", status="excluded",
-                detail=f"{len(issue.get('worklog_ids', []))} entries excluded by approval",
-            )
-            results.append({"jira_key": jira_key, "status": "excluded"})
-            continue
-        result: dict = {"jira_key": jira_key}
-        try:
-            fresh_items = await get_unsynced_worklogs_by_ids(db, issue.get("worklog_ids", []))
-            entries = _worklog_entries(fresh_items)
+    # Serialize pushes in-process; the DB claim handles cross-process safety.
+    async with _push_lock:
+        # Re-check status under the lock — a racing request may have just pushed it.
+        current = await get_pending(db, pending_id)
+        if not current or current["status"] != "pending":
+            return {"error": f"pending batch already {current['status'] if current else 'gone'}"}
+        # Crash recovery: release any rows a previous crashed attempt left claimed.
+        await release_worklog_claims(db, token)
+
+        for issue in batch.get("issues", []):
+            jira_key = issue["jira_key"]
+            task_id = issue.get("task_id")
+            worklog_ids = issue.get("worklog_ids", [])
+            if jira_key in exclude:
+                for wid in worklog_ids:
+                    await mark_worklog_synced(db, wid, f"excluded:{pending_id}")
+                await insert_jira_sync_log(
+                    db, task_id=task_id, jira_key=jira_key,
+                    action="worklog", status="excluded",
+                    detail=f"{len(worklog_ids)} entries excluded by approval",
+                )
+                results.append({"jira_key": jira_key, "status": "excluded"})
+                continue
+
+            result: dict = {"jira_key": jira_key}
+            # Atomically claim the rows BEFORE the network call. A concurrent
+            # approval over the same worklogs now claims zero and skips them.
+            claimed = await claim_worklogs_for_push(db, worklog_ids, token)
+            entries = _worklog_entries(claimed)
             if not entries:
                 await insert_jira_sync_log(
                     db, task_id=task_id, jira_key=jira_key,
@@ -341,44 +363,47 @@ async def approve_pending(
                 result["reason"] = "already synced"
                 results.append(result)
                 continue
-            if entries:
-                total_seconds = sum(w["time_spent_seconds"] for w in fresh_items)
+
+            claimed_ids = [w["id"] for w in claimed]
+            try:
+                total_seconds = sum(w["time_spent_seconds"] for w in claimed)
                 total_mins = total_seconds // 60
                 comment = (
                     issue.get("summary") or ""
-                    if len(fresh_items) == len(issue.get("worklog_ids", []))
+                    if len(claimed) == len(worklog_ids)
                     else _fallback_summary(entries)
                 )
                 jira_result = await client.add_worklog(
                     jira_key,
                     time_spent_seconds=max(60, total_seconds),
                     comment=comment,
-                    started=format_worklog_started(min(w["started_at"] for w in fresh_items)),
+                    started=format_worklog_started(min(w["started_at"] for w in claimed)),
                 )
                 jira_wid = jira_result.get("id", "")
-                for w in fresh_items:
-                    await mark_worklog_synced(db, w["id"], jira_wid)
+                # Success: stamp the real Jira id onto the already-claimed rows.
+                await finalize_worklog_claims(db, claimed_ids, jira_wid)
                 await insert_jira_sync_log(
                     db, task_id=task_id, jira_key=jira_key,
                     action="worklog", status="ok",
                     detail=f"{len(entries)} entries, {total_mins}m",
                 )
                 result["worklog"] = {"entries": len(entries), "minutes": total_mins}
+                result["status"] = "ok"
+                pushed += 1
+            except Exception as e:  # noqa: BLE001
+                # Push failed — release the claim so these worklogs sync next time.
+                await release_worklog_claims(db, token)
+                await insert_jira_sync_log(
+                    db, task_id=task_id, jira_key=jira_key,
+                    action="worklog", status="error", detail=str(e)[:200],
+                )
+                result["status"] = "error"
+                result["error"] = str(e)[:200]
+                failed += 1
+            results.append(result)
 
-            result["status"] = "ok"
-            pushed += 1
-        except Exception as e:  # noqa: BLE001
-            await insert_jira_sync_log(
-                db, task_id=task_id, jira_key=jira_key,
-                action="worklog", status="error", detail=str(e)[:200],
-            )
-            result["status"] = "error"
-            result["error"] = str(e)[:200]
-            failed += 1
-        results.append(result)
-
-    await set_pending_status(db, pending_id, "pushed", result_json=json.dumps(results))
-    await _supersede_overlapping_pending_batches(db, pending_id, batch)
+        await set_pending_status(db, pending_id, "pushed", result_json=json.dumps(results))
+        await _supersede_overlapping_pending_batches(db, pending_id, batch)
     return {"pushed": pushed, "failed": failed, "results": results}
 
 

@@ -561,6 +561,86 @@ async def mark_worklog_synced(db: aiosqlite.Connection, worklog_id: str,
     await db.commit()
 
 
+async def claim_worklogs_for_push(
+    db: aiosqlite.Connection, worklog_ids: list[str], token: str,
+) -> list[dict]:
+    """Atomically claim unsynced worklogs for a Jira push, returning the claimed rows.
+
+    Flips ``synced_to_jira`` 0→1 and stamps ``jira_worklog_id`` with a transient
+    ``token`` in a single conditional UPDATE. SQLite serializes writers, so a
+    concurrent approval (same process or another) that targets the same rows finds
+    them already synced and claims **zero** — this is what prevents a duplicate
+    Jira worklog. The claim is finalized with the real Jira id on success, or
+    released back to unsynced on failure / crash recovery.
+    """
+    if not worklog_ids:
+        return []
+    placeholders = ",".join("?" for _ in worklog_ids)
+    now = time.time()
+    await db.execute(
+        f"UPDATE worklogs SET synced_to_jira = 1, jira_worklog_id = ?, synced_at = ? "
+        f"WHERE synced_to_jira = 0 AND id IN ({placeholders})",
+        (token, now, *worklog_ids),
+    )
+    await db.commit()
+    async with db.execute(
+        f"""SELECT w.*, t.jira_issue_key FROM worklogs w
+            JOIN tasks t ON w.task_id = t.id
+            WHERE w.jira_worklog_id = ? AND w.id IN ({placeholders})
+            ORDER BY w.started_at ASC""",
+        (token, *worklog_ids),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def finalize_worklog_claims(
+    db: aiosqlite.Connection, worklog_ids: list[str], jira_worklog_id: str,
+) -> None:
+    """Stamp the real Jira worklog id onto rows claimed for a successful push."""
+    if not worklog_ids:
+        return
+    placeholders = ",".join("?" for _ in worklog_ids)
+    await db.execute(
+        f"UPDATE worklogs SET jira_worklog_id = ? WHERE id IN ({placeholders})",
+        (jira_worklog_id or None, *worklog_ids),
+    )
+    await db.commit()
+
+
+async def release_worklog_claims(db: aiosqlite.Connection, token: str) -> int:
+    """Release worklogs still held by ``token`` back to unsynced (failure/recovery).
+
+    Returns the number released. Only touches rows still carrying the transient
+    token, so finalized (successfully pushed) rows are never reverted.
+    """
+    cur = await db.execute(
+        "UPDATE worklogs SET synced_to_jira = 0, jira_worklog_id = NULL, synced_at = NULL "
+        "WHERE jira_worklog_id = ? AND synced_to_jira = 1",
+        (token,),
+    )
+    await db.commit()
+    return cur.rowcount if cur.rowcount is not None else 0
+
+
+async def release_stale_worklog_claims(
+    db: aiosqlite.Connection, older_than_seconds: int = 600,
+) -> int:
+    """Recover orphaned claims: rows left in the transient ``claiming:`` state by a
+    process that crashed between claiming and pushing. Anything older than the
+    cutoff (default 10 min — far longer than any real push) is returned to unsynced
+    so the next batch picks it up. Returns the number recovered.
+    """
+    cutoff = time.time() - older_than_seconds
+    cur = await db.execute(
+        "UPDATE worklogs SET synced_to_jira = 0, jira_worklog_id = NULL, synced_at = NULL "
+        "WHERE synced_to_jira = 1 AND jira_worklog_id LIKE 'claiming:%' "
+        "AND (synced_at IS NULL OR synced_at < ?)",
+        (cutoff,),
+    )
+    await db.commit()
+    return cur.rowcount if cur.rowcount is not None else 0
+
+
 async def get_task_worklogs_for_jira_sync(db: aiosqlite.Connection, task_id: str) -> list[dict]:
     """Get all unsynced worklogs for a task, aggregated for Jira bulk sync."""
     task = await get_task(db, task_id)
