@@ -2,6 +2,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
+import os
 import aiosqlite
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,9 @@ from slate.api.routes.sprints import router as sprints_router
 from slate.api.routes.jira import router as jira_router
 from slate.api.routes.worklogs import router as worklogs_router
 from slate.db.queries import get_jira_config
-from slate.jira.scheduler import run_scheduler, run_worklog_scheduler, run_approval_scheduler
+from slate.jira.scheduler import (
+    run_scheduler, run_worklog_scheduler, run_approval_scheduler, run_import_scheduler,
+)
 
 DB_PATH = Path.home() / ".slate" / "db.sqlite"
 
@@ -33,6 +36,7 @@ def create_app() -> FastAPI:
 
         app.state.scheduler_task = None
         app.state.worklog_scheduler_task = None
+        app.state.import_scheduler_task = None
         config = await get_jira_config(app.state.db)
         if config and config.get("enabled"):
             # Single daily approval-gated staging — builds a PENDING batch and
@@ -40,6 +44,13 @@ def create_app() -> FastAPI:
             app.state.scheduler_task = asyncio.create_task(
                 run_approval_scheduler(config["sync_time"], DB_PATH)
             )
+            # Daily Jira→Slate import staging — fills the import queue for approval;
+            # never creates tasks on its own. Enable with JIRA_IMPORT_ENABLED=1.
+            if os.getenv("JIRA_IMPORT_ENABLED", "").strip() in ("1", "true", "yes"):
+                import_time = os.getenv("JIRA_IMPORT_TIME", "08:30")
+                app.state.import_scheduler_task = asyncio.create_task(
+                    run_import_scheduler(import_time, DB_PATH)
+                )
 
         yield
 
@@ -47,6 +58,8 @@ def create_app() -> FastAPI:
             app.state.scheduler_task.cancel()
         if app.state.worklog_scheduler_task:
             app.state.worklog_scheduler_task.cancel()
+        if app.state.import_scheduler_task:
+            app.state.import_scheduler_task.cancel()
         if hasattr(app.state, "db") and app.state.db:
             await app.state.db.close()
 

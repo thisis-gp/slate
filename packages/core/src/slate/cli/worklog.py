@@ -12,6 +12,7 @@ from slate.db.queries import (
 )
 from slate.jira.client import JiraClient
 from slate.jira.mapping import format_worklog_started
+from slate.jira.sync import _fallback_summary, _worklog_entries
 from slate.db.queries import get_jira_config, insert_jira_sync_log
 
 app = typer.Typer(help="Worklog tracking for Jira")
@@ -141,10 +142,8 @@ def sync_worklogs(
                 total_mins = total_seconds // 60
                 
                 # Build summary from all worklog entries
-                summaries = []
-                for w in items:
-                    summaries.append(f"[{w['tool']}] {w['agent_name']}: {w['summary']}")
-                combined_summary = "\n".join(summaries[:10])  # Limit to 10 entries
+                summaries = _worklog_entries(items)
+                combined_summary = _fallback_summary(summaries)
                 if len(summaries) > 10:
                     combined_summary += f"\n... and {len(summaries) - 10} more entries"
                 

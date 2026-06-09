@@ -1,0 +1,4 @@
+{
+  "vault_path": "~/ObsidianVault",
+  "_comment": "Per-repo override for Slate's Obsidian vault root. Copy to .agents/slate.json. Wins over the SLATE_VAULT_PATH env var. Slate writes one <JIRA_KEY>.md per issue under <vault_path>/slate/."
+}

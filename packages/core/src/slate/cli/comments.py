@@ -22,29 +22,59 @@ def add_cmd(
     body: str = typer.Argument(...),
     by: str = typer.Option("human", "--by"),
     author_type: str = typer.Option("human", "--type"),
+    kind: str = typer.Option("note", "--kind", "-k",
+                             help="note | decision | heartbeat"),
 ):
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
             db.row_factory = aiosqlite.Row
             await apply_schema(db)
-            await add_comment(db, task_id=task_id, author=by, body=body, author_type=author_type)
-            console.print(f"[green]Comment added[/] to {task_id}")
+            await add_comment(db, task_id=task_id, author=by, body=body,
+                              author_type=author_type, kind=kind)
+            label = "Decision" if kind == "decision" else "Comment"
+            console.print(f"[green]{label} added[/] to {task_id}")
+    asyncio.run(_run())
+
+@app.command("decision")
+def decision_cmd(
+    task_id: str = typer.Argument(...),
+    body: str = typer.Argument(..., help="The decision and its rationale"),
+    by: str = typer.Option("human", "--by"),
+    author_type: str = typer.Option("agent", "--type"),
+):
+    """Record a decision taken on a task (shortcut for `comment add --kind decision`).
+
+    Agents should call this whenever they make a non-trivial call so the next
+    agent (or you) sees *why*, not just *what*.
+    """
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            await add_comment(db, task_id=task_id, author=by, body=body,
+                              author_type=author_type, kind="decision")
+            console.print(f"[green]Decision recorded[/] on {task_id}")
     asyncio.run(_run())
 
 @app.command("list")
-def list_cmd(task_id: str = typer.Argument(...)):
+def list_cmd(
+    task_id: str = typer.Argument(...),
+    kind: str = typer.Option("", "--kind", "-k", help="Filter: note|decision|heartbeat"),
+):
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
             db.row_factory = aiosqlite.Row
             await apply_schema(db)
             comments = await list_comments(db, task_id)
+        if kind:
+            comments = [c for c in comments if c.get("kind", "note") == kind]
         if not comments:
             console.print("[dim]No comments yet.[/]")
             return
-        table = Table("Author", "Type", "Comment", "Time")
+        table = Table("Author", "Kind", "Comment", "Time")
         for c in comments:
             ts = str(round(c["ts"])) if c.get("ts") else "-"
             body_preview = c["body"][:80]
-            table.add_row(c["author"], c["author_type"], body_preview, ts)
+            table.add_row(c["author"], c.get("kind", "note"), body_preview, ts)
         console.print(table)
     asyncio.run(_run())

@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:7331";
+const BASE = import.meta.env.VITE_API_URL ?? "/api";
 
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
@@ -81,6 +81,21 @@ export interface PendingResponse {
 export interface JiraStatus {
   base_url?: string; email?: string; sync_time?: string; enabled?: boolean; state_map?: string;
 }
+export interface PendingImport {
+  id: string; jira_key: string; summary?: string; issue_type?: string;
+  priority?: string; jira_status?: string; status: string;
+  project_id?: string; task_id?: string; created_at: number;
+}
+export interface ImportStageResult {
+  staged?: string[]; staged_count?: number; fetched?: number;
+  // Array when the stage ran; `true` when Jira is not configured (with `reason`).
+  skipped?: Array<{ jira_key: string; reason: string }> | boolean;
+  reason?: string;
+}
+export interface ImportApproveResult {
+  task_id?: string; jira_key?: string; project_id?: string;
+  obsidian?: string; obsidian_error?: string; error?: string;
+}
 export interface ApproveResult {
   pushed: number; failed: number;
   results: Array<{ jira_key: string; status: string; detail?: string }>;
@@ -149,5 +164,16 @@ export const api = {
     approve: (id: string, exclude: string[] = []) =>
       req<ApproveResult>(`/jira/pending/${id}/approve`, { method: "POST", body: JSON.stringify({ exclude }) }),
     reject: (id: string) => req<{ rejected: boolean }>(`/jira/pending/${id}/reject`, { method: "POST" }),
+    // Jira → Slate import (approval-gated)
+    stageImports: (jql?: string) =>
+      req<ImportStageResult>("/jira/import", { method: "POST", body: JSON.stringify(jql ? { jql } : {}) }),
+    imports: (status = "pending") => req<PendingImport[]>(`/jira/imports?status=${status}`),
+    approveImport: (id: string, project_id: string, assigned_to = "") =>
+      req<ImportApproveResult>(`/jira/imports/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ project_id, assigned_to }),
+      }),
+    rejectImport: (id: string) =>
+      req<{ rejected: boolean; jira_key?: string }>(`/jira/imports/${id}/reject`, { method: "POST" }),
   },
 };

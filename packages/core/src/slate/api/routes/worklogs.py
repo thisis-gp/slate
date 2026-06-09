@@ -9,6 +9,7 @@ from slate.db.queries import (
 )
 from slate.jira.client import JiraClient
 from slate.jira.mapping import format_worklog_started
+from slate.jira.sync import _fallback_summary, _worklog_entries
 from collections import defaultdict
 
 router = APIRouter(tags=["worklogs"])
@@ -89,10 +90,8 @@ async def sync_worklogs(request: Request, dry_run: bool = False):
         total_seconds = sum(w["time_spent_seconds"] for w in items)
         total_mins = total_seconds // 60
 
-        summaries = []
-        for w in items:
-            summaries.append(f"[{w['tool']}] {w['agent_name']}: {w['summary']}")
-        combined_summary = "\n".join(summaries[:10])
+        summaries = _worklog_entries(items)
+        combined_summary = _fallback_summary(summaries)
         if len(summaries) > 10:
             combined_summary += f"\n... and {len(summaries) - 10} more entries"
 

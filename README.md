@@ -168,6 +168,25 @@ slate jira link MP-4 PROJ-123
 slate jira sync
 ```
 
+**Import Jira issues assigned to you (Jira → Slate, approval-gated):**
+```bash
+slate jira import                 # stage assigned issues (creates NO tasks)
+slate jira imports                # review the staged queue
+slate jira import-approve <id> --project <project-id> --assign me   # create the linked task
+slate jira import-reject <id>
+```
+Importing only *stages* candidates; every issue is assigned to a Slate project and
+approved by you (in the CLI or the **Jira Import** UI tab) before a task is created.
+Re-running is idempotent. Set `JIRA_IMPORT_ENABLED=1` (+ optional `JIRA_IMPORT_TIME`)
+to stage assigned issues automatically each day — still approval-gated.
+
+**Worklog identity:** synced worklog notes are scrubbed to a neutral, impersonal
+voice — tool/agent/vendor names (Claude, Codex, Cursor, …) never reach Jira, on
+the LLM path *and* the offline fallback.
+
+**Scheduler timezone:** the daily approval-staging runs in `SLATE_TZ` (default
+`Asia/Kolkata`) and recovers a missed window on next startup.
+
 **View sync status and approval-needed items:**
 ```bash
 slate jira status
@@ -201,4 +220,48 @@ POST  /jira/configure
 GET   /jira/status
 POST  /jira/sync
 GET   /jira/sync-log
+POST  /jira/import                       # stage assigned issues
+GET   /jira/imports                      # list staged imports
+POST  /jira/imports/{id}/approve         # create linked task in chosen project
+POST  /jira/imports/{id}/reject
 ```
+
+---
+
+## Shared context for agents
+
+Slate is a shared memory layer across your tools (Claude Code, Codex, Cursor, …).
+Before starting a task, an agent reads the brief; while working, it records progress
+and decisions so the next agent (or you) has the full picture.
+
+```bash
+# The brief an agent reads before starting (human or --json for agents)
+slate task context <task-id>
+slate task context <task-id> --json
+
+# Lightweight progress heartbeat (latest one surfaces in context)
+slate task heartbeat <task-id> "wired the parser, tests next" --by codex
+
+# Record a decision + rationale (shown prominently in context)
+slate comment decision <task-id> "Chose SQLite over Postgres — single-file, no ops" --by claude
+```
+
+Comments carry a `kind` of `note`, `decision`, or `heartbeat`.
+
+---
+
+## Obsidian docs
+
+Each Jira issue gets one markdown doc in a central vault, with per-repo subfolders.
+Slate owns a managed block (status, worklogs, decisions, state history); everything
+outside it is freeform for agents and you. Configure the vault root with
+`SLATE_VAULT_PATH`, overridable per-repo via `.agents/slate.json`
+(`{"vault_path": "..."}`).
+
+```bash
+slate obsidian path                 # show the resolved vault path
+slate obsidian sync <task-id>       # write/update <vault>/slate/<JIRA_KEY>.md
+slate obsidian show <JIRA_KEY>      # print the current doc
+```
+
+Approving a Jira import auto-scaffolds the issue's doc.

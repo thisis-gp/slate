@@ -6,9 +6,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from slate.db.queries import (
     upsert_jira_config, get_jira_config, list_jira_sync_log, get_latest_pending,
-    count_unlinked_worklogs, update_task_jira_key, get_task,
+    count_unlinked_worklogs, update_task_jira_key, get_task, list_pending_imports,
 )
 from slate.jira.sync import prepare_pending, approve_pending, reject_pending
+from slate.jira.importer import (
+    stage_assigned_issues, approve_import, reject_import, DEFAULT_JQL,
+)
 from slate.jira.scheduler import run_approval_scheduler
 
 router = APIRouter(tags=["jira"])
@@ -108,6 +111,46 @@ async def link(body: LinkRequest, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await get_task(request.app.state.db, body.task_id)
+
+
+class ImportRequest(BaseModel):
+    jql: str = DEFAULT_JQL
+
+
+@router.post("/jira/import")
+async def jira_import(request: Request, body: ImportRequest = ImportRequest()):
+    """Stage assigned Jira issues for approval. Creates NO tasks."""
+    return await stage_assigned_issues(request.app.state.db, jql=body.jql)
+
+
+@router.get("/jira/imports")
+async def jira_imports(request: Request, status: str = "pending"):
+    return await list_pending_imports(request.app.state.db, status=status)
+
+
+class ImportApproveRequest(BaseModel):
+    project_id: str
+    assigned_to: str = ""
+    write_obsidian: bool = True
+
+
+@router.post("/jira/imports/{import_id}/approve")
+async def jira_import_approve(import_id: str, body: ImportApproveRequest, request: Request):
+    result = await approve_import(
+        request.app.state.db, import_id, project_id=body.project_id,
+        assigned_to=body.assigned_to, write_obsidian=body.write_obsidian,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.post("/jira/imports/{import_id}/reject")
+async def jira_import_reject(import_id: str, request: Request):
+    result = await reject_import(request.app.state.db, import_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/jira/sync-log")

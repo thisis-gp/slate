@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 import uuid
 import aiosqlite
 from unittest.mock import AsyncMock, patch
@@ -6,11 +7,19 @@ from slate.db.schema import apply_schema
 from slate.db.queries import (
     insert_project, insert_task, insert_agent_run,
     upsert_jira_config, update_task_jira_key,
-    list_jira_sync_log,
+    list_jira_sync_log, insert_worklog, list_worklogs,
+    mark_worklog_synced, get_pending,
 )
-from slate.jira.sync import sync_all, _sync_status, _sync_worklogs
+from slate.jira.sync import (
+    sync_all,
+    _sync_status,
+    _sync_worklogs_legacy as _sync_worklogs,
+    prepare_pending,
+    approve_pending,
+)
 from slate.jira.client import JiraClient
 from slate.jira.mapping import DEFAULT_STATE_MAP
+import slate.jira.sync as jira_sync
 
 
 @pytest.fixture
@@ -112,6 +121,8 @@ async def test_sync_worklogs_pushes_unsynced_runs(db, setup):
     client.add_worklog.assert_called_once()
     call_kwargs = client.add_worklog.call_args[1]
     assert "Fixed the bug" in call_kwargs["comment"]
+    assert "claude" not in call_kwargs["comment"].lower()
+    assert "claude-code" not in call_kwargs["comment"].lower()
 
 
 @pytest.mark.asyncio
@@ -143,3 +154,157 @@ async def test_sync_all_returns_synced_count(db, setup):
         result = await sync_all(db)
 
     assert result["synced"] == 1
+
+
+@pytest.mark.asyncio
+async def test_approval_pushes_worklog_without_checking_transitions(db, setup):
+    pid, tid = setup
+    await insert_worklog(
+        db,
+        id=str(uuid.uuid4()),
+        task_id=tid,
+        agent_name="codex",
+        tool="codex",
+        summary="Implemented the fix",
+        time_spent_seconds=1800,
+    )
+    pending = await prepare_pending(db)
+
+    client = AsyncMock(spec=JiraClient)
+    client.get_transitions.side_effect = AssertionError("transitions must not be checked")
+    client.transition_issue.side_effect = AssertionError("transitions must not be pushed")
+    client.add_worklog.return_value = {"id": "50002"}
+
+    with patch("slate.jira.sync.JiraClient", return_value=client):
+        result = await approve_pending(db, pending["pending_id"])
+
+    assert result["failed"] == 0
+    assert result["pushed"] == 1
+    client.get_transitions.assert_not_called()
+    client.transition_issue.assert_not_called()
+    client.add_worklog.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_prepare_pending_formats_entries_as_user_work(db, setup):
+    pid, tid = setup
+    await insert_worklog(
+        db,
+        id=str(uuid.uuid4()),
+        task_id=tid,
+        agent_name="claude",
+        tool="claude-code",
+        summary="Implemented the fix",
+        time_spent_seconds=1800,
+    )
+
+    pending = await prepare_pending(db)
+
+    entries = pending["batch"]["issues"][0]["entries"]
+    assert entries == ["Implemented the fix"]
+
+
+@pytest.mark.asyncio
+async def test_approval_skips_worklogs_already_synced_elsewhere(db, setup):
+    pid, tid = setup
+    wid = str(uuid.uuid4())
+    await insert_worklog(
+        db,
+        id=wid,
+        task_id=tid,
+        agent_name="codex",
+        tool="codex",
+        summary="Implemented the fix",
+        time_spent_seconds=1800,
+    )
+    pending = await prepare_pending(db)
+    await mark_worklog_synced(db, wid, "already-synced")
+
+    client = AsyncMock(spec=JiraClient)
+    with patch("slate.jira.sync.JiraClient", return_value=client):
+        result = await approve_pending(db, pending["pending_id"])
+
+    assert result["pushed"] == 0
+    assert result["failed"] == 0
+    assert result["results"] == [{"jira_key": "PROJ-42", "status": "skipped", "reason": "already synced"}]
+    client.add_worklog.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_supersedes_older_pending_batches_for_same_worklogs(db, setup):
+    pid, tid = setup
+    await insert_worklog(
+        db,
+        id=str(uuid.uuid4()),
+        task_id=tid,
+        agent_name="codex",
+        tool="codex",
+        summary="Implemented the fix",
+        time_spent_seconds=1800,
+    )
+    older = await prepare_pending(db)
+    newer = await prepare_pending(db)
+
+    client = AsyncMock(spec=JiraClient)
+    client.add_worklog.return_value = {"id": "50003"}
+    with patch("slate.jira.sync.JiraClient", return_value=client):
+        result = await approve_pending(db, newer["pending_id"])
+
+    older_row = await get_pending(db, older["pending_id"])
+    newer_row = await get_pending(db, newer["pending_id"])
+    assert result["pushed"] == 1
+    assert older_row["status"] == "superseded"
+    assert newer_row["status"] == "pushed"
+
+
+@pytest.mark.asyncio
+async def test_prepare_pending_falls_back_when_summary_times_out(db, setup, monkeypatch):
+    pid, tid = setup
+    await insert_worklog(
+        db,
+        id=str(uuid.uuid4()),
+        task_id=tid,
+        agent_name="codex",
+        tool="codex",
+        summary="Implemented the fix",
+        time_spent_seconds=1800,
+    )
+
+    async def slow_summary(*args, **kwargs):
+        await asyncio.sleep(1)
+        return "too slow", "slow"
+
+    monkeypatch.setattr(jira_sync, "SUMMARY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(jira_sync, "summarize_worklog", slow_summary)
+
+    pending = await prepare_pending(db)
+
+    issue = pending["batch"]["issues"][0]
+    assert pending["pending_id"]
+    assert issue["summary_provider"] == "concat_timeout"
+    assert "Implemented the fix" in issue["summary"]
+
+
+@pytest.mark.asyncio
+async def test_approval_exclude_marks_worklogs_handled(db, setup):
+    pid, tid = setup
+    wid = str(uuid.uuid4())
+    await insert_worklog(
+        db,
+        id=wid,
+        task_id=tid,
+        agent_name="codex",
+        tool="codex",
+        summary="Do not push this",
+        time_spent_seconds=900,
+    )
+    pending = await prepare_pending(db)
+
+    result = await approve_pending(db, pending["pending_id"], exclude=["PROJ-42"])
+
+    logs = await list_worklogs(db, task_id=tid)
+    sync_logs = await list_jira_sync_log(db, task_id=tid)
+    assert result["results"] == [{"jira_key": "PROJ-42", "status": "excluded"}]
+    assert logs[0]["synced_to_jira"] == 1
+    assert logs[0]["jira_worklog_id"] == f"excluded:{pending['pending_id']}"
+    assert sync_logs[0]["status"] == "excluded"

@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS comments (
     task_id     TEXT NOT NULL REFERENCES tasks(id),
     author      TEXT NOT NULL,
     author_type TEXT NOT NULL DEFAULT 'human',
+    kind        TEXT NOT NULL DEFAULT 'note',
     body        TEXT NOT NULL,
     ts          REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
@@ -176,6 +177,30 @@ CREATE TABLE IF NOT EXISTS jira_pending_sync (
     result_json      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS scheduler_state (
+    name        TEXT PRIMARY KEY,
+    last_run_on TEXT,
+    updated_at  REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+);
+
+CREATE TABLE IF NOT EXISTS jira_pending_import (
+    id           TEXT PRIMARY KEY,
+    jira_key     TEXT NOT NULL,
+    summary      TEXT,
+    issue_type   TEXT,
+    priority     TEXT,
+    jira_status  TEXT,
+    raw_json     TEXT,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    project_id   TEXT REFERENCES projects(id),
+    task_id      TEXT REFERENCES tasks(id),
+    created_at   REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+    decided_at   REAL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_import_status ON jira_pending_import(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_import_key_pending
+    ON jira_pending_import(jira_key) WHERE status = 'pending';
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state      ON tasks(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint     ON tasks(sprint_id);
@@ -215,6 +240,13 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_worklogs_synced ON worklogs(synced_to_jira)",
     "CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent)",
     "CREATE TABLE IF NOT EXISTS jira_pending_sync (id TEXT PRIMARY KEY, created_at REAL DEFAULT (unixepoch('now', 'subsec')), status TEXT NOT NULL DEFAULT 'pending', batch_json TEXT NOT NULL, summary_provider TEXT, decided_at REAL, result_json TEXT)",
+    "CREATE TABLE IF NOT EXISTS scheduler_state (name TEXT PRIMARY KEY, last_run_on TEXT, updated_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')))",
+    "ALTER TABLE comments ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'",
+    "CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comments_kind ON comments(kind)",
+    "CREATE TABLE IF NOT EXISTS jira_pending_import (id TEXT PRIMARY KEY, jira_key TEXT NOT NULL, summary TEXT, issue_type TEXT, priority TEXT, jira_status TEXT, raw_json TEXT, status TEXT NOT NULL DEFAULT 'pending', project_id TEXT REFERENCES projects(id), task_id TEXT REFERENCES tasks(id), created_at REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')), decided_at REAL)",
+    "CREATE INDEX IF NOT EXISTS idx_pending_import_status ON jira_pending_import(status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_import_key_pending ON jira_pending_import(jira_key) WHERE status = 'pending'",
 ]
 
 async def apply_schema(conn: aiosqlite.Connection) -> None:

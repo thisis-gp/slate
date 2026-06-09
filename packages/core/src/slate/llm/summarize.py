@@ -14,11 +14,18 @@ from __future__ import annotations
 import os
 import re
 import httpx
+from slate.jira.scrub import scrub_identity
 
 _SYSTEM = (
     "You summarize a software engineer's day of work on a single Jira issue into one "
     "concise worklog note (3-6 lines). Be factual and specific; merge related items; "
     "drop duplicates and noise. Do not invent or inflate work beyond the notes given. "
+    "VOICE: write in a neutral, impersonal voice that states the work itself — e.g. "
+    "'Implemented JWT validation; fixed the login redirect.' Do NOT use a subject: no "
+    "'I', no 'we', no 'the engineer'. NEVER mention any AI tool, assistant, agent, "
+    "model, or vendor by name (e.g. Claude, Codex, Cursor, Kimi, Hermes, GPT, "
+    "ChatGPT, Copilot, Anthropic, OpenAI) and never write 'the agent'/'the assistant' "
+    "— the reader must see only human engineering work. "
     "CRITICAL: output ONLY the note text itself — never start with 'Here is', 'Sure', "
     "'Below is' or any preamble; no headings, no surrounding quotes, no sign-off."
 )
@@ -99,9 +106,9 @@ async def summarize_worklog(jira_key: str, entries: list[str], total_minutes: in
         if not key:
             continue
         try:
-            out = _clean(await _chat(base, key, model, _SYSTEM, user))
+            out = scrub_identity(_clean(await _chat(base, key, model, _SYSTEM, user)))
             if out:
                 return out, name
         except Exception:
             continue
-    return _plain(entries), "concat"
+    return scrub_identity(_plain(entries)), "concat"

@@ -161,13 +161,15 @@ async def update_task_state(db: aiosqlite.Connection, *, task_id: str,
 
 
 async def add_comment(db: aiosqlite.Connection, *, task_id: str, author: str,
-                       body: str, author_type: str = "agent") -> dict:
+                       body: str, author_type: str = "agent",
+                       kind: str = "note") -> dict:
     now = time.time()
     task = await get_task(db, task_id)
     full_id = task["id"] if task else task_id
     async with db.execute(
-        "INSERT INTO comments (task_id, author, author_type, body, ts) VALUES (?, ?, ?, ?, ?) RETURNING *",
-        (full_id, author, author_type, body, now),
+        "INSERT INTO comments (task_id, author, author_type, kind, body, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+        (full_id, author, author_type, kind, body, now),
     ) as cur:
         row = await cur.fetchone()
         return dict(row) if row else {}
@@ -243,7 +245,16 @@ async def get_task_context(db: aiosqlite.Connection, task_id: str) -> dict[str, 
         "SELECT * FROM worklogs WHERE task_id = ? ORDER BY started_at ASC", (full_id,)
     ) as cur:
         worklogs = [dict(r) async for r in cur]
-    return {"task": task, "runs": runs, "transitions": transitions, "comments": comments, "worklogs": worklogs}
+    # Convenience splits for an agent reading the brief before starting work.
+    decisions = [c for c in comments if c.get("kind") == "decision"]
+    heartbeats = [c for c in comments if c.get("kind") == "heartbeat"]
+    notes = [c for c in comments if c.get("kind") not in ("decision", "heartbeat")]
+    return {
+        "task": task, "runs": runs, "transitions": transitions,
+        "comments": comments, "worklogs": worklogs,
+        "decisions": decisions, "heartbeats": heartbeats, "notes": notes,
+        "latest_heartbeat": heartbeats[-1] if heartbeats else None,
+    }
 
 
 async def get_daily_sync(db: aiosqlite.Connection, date: str) -> dict[str, Any]:
@@ -369,16 +380,19 @@ async def upsert_jira_config(
 async def get_jira_config(db: aiosqlite.Connection) -> Optional[dict]:
     """Resolve Jira config from the DB, falling back to JIRA_* env vars.
 
-    Env lets you configure Jira without storing the token in the DB. DB values win
-    where present; env fills anything missing. Returns None if there are no usable
-    credentials (base_url + email + api_token).
+    Env lets you configure Jira without storing the token in the DB. Env credentials
+    win where present so token rotation in .env takes effect after a restart.
+    Returns None if there are no usable credentials (base_url + email + api_token).
     """
     async with db.execute("SELECT * FROM jira_config WHERE id = 1") as cur:
         row = await cur.fetchone()
     cfg = dict(row) if row else {}
-    cfg["base_url"] = (cfg.get("base_url") or os.getenv("JIRA_BASE_URL", "")).strip().rstrip("/")
-    cfg["email"] = (cfg.get("email") or os.getenv("JIRA_EMAIL", "")).strip()
-    cfg["api_token"] = (cfg.get("api_token") or os.getenv("JIRA_API_TOKEN", "")).strip()
+    env_base_url = os.getenv("JIRA_BASE_URL", "").strip()
+    env_email = os.getenv("JIRA_EMAIL", "").strip()
+    env_api_token = os.getenv("JIRA_API_TOKEN", "").strip()
+    cfg["base_url"] = (env_base_url or cfg.get("base_url") or "").strip().rstrip("/")
+    cfg["email"] = (env_email or cfg.get("email") or "").strip()
+    cfg["api_token"] = (env_api_token or cfg.get("api_token") or "").strip()
     cfg["sync_time"] = cfg.get("sync_time") or os.getenv("JIRA_SYNC_TIME", "09:00")
     cfg.setdefault("worklog_sync_time", os.getenv("JIRA_WORKLOG_SYNC_TIME", cfg["sync_time"]))
     if not cfg.get("state_map"):
@@ -503,6 +517,24 @@ async def get_unsynced_worklogs(db: aiosqlite.Connection) -> list[dict]:
            JOIN tasks t ON w.task_id = t.id
            WHERE w.synced_to_jira = 0 AND t.jira_issue_key IS NOT NULL
            ORDER BY w.started_at ASC"""
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def get_unsynced_worklogs_by_ids(
+    db: aiosqlite.Connection, worklog_ids: list[str],
+) -> list[dict]:
+    if not worklog_ids:
+        return []
+    placeholders = ",".join("?" for _ in worklog_ids)
+    async with db.execute(
+        f"""SELECT w.*, t.jira_issue_key FROM worklogs w
+            JOIN tasks t ON w.task_id = t.id
+            WHERE w.synced_to_jira = 0
+            AND t.jira_issue_key IS NOT NULL
+            AND w.id IN ({placeholders})
+            ORDER BY w.started_at ASC""",
+        worklog_ids,
     ) as cur:
         return [dict(r) async for r in cur]
 
@@ -642,3 +674,82 @@ async def list_notification_rules(db: aiosqlite.Connection, enabled_only: bool =
         "SELECT * FROM notification_rules ORDER BY id ASC"
     ) as cur:
         return [dict(r) async for r in cur]
+
+
+# ── Scheduler state (daily missed-run recovery) ───────────────────────────────
+
+async def get_scheduler_last_run(db: aiosqlite.Connection, name: str) -> Optional[str]:
+    """Return the local date (YYYY-MM-DD) a named scheduler last fired, or None."""
+    async with db.execute(
+        "SELECT last_run_on FROM scheduler_state WHERE name = ?", (name,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row["last_run_on"] if row else None
+
+
+async def set_scheduler_last_run(db: aiosqlite.Connection, name: str, day: str) -> None:
+    await db.execute(
+        "INSERT INTO scheduler_state (name, last_run_on, updated_at) "
+        "VALUES (?, ?, unixepoch('now', 'subsec')) "
+        "ON CONFLICT(name) DO UPDATE SET "
+        "last_run_on = excluded.last_run_on, updated_at = excluded.updated_at",
+        (name, day),
+    )
+    await db.commit()
+
+
+# ── Jira -> Slate import staging (always human-approved) ──────────────────────
+
+async def task_exists_for_jira_key(db: aiosqlite.Connection, jira_key: str) -> bool:
+    async with db.execute(
+        "SELECT 1 FROM tasks WHERE jira_issue_key = ? LIMIT 1", (jira_key,)
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def pending_import_exists(db: aiosqlite.Connection, jira_key: str) -> bool:
+    async with db.execute(
+        "SELECT 1 FROM jira_pending_import WHERE jira_key = ? AND status = 'pending' LIMIT 1",
+        (jira_key,),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def insert_pending_import(db: aiosqlite.Connection, *, id: str, jira_key: str,
+                                 summary: str = "", issue_type: str = "",
+                                 priority: str = "", jira_status: str = "",
+                                 raw_json: str = "") -> None:
+    await db.execute(
+        "INSERT INTO jira_pending_import (id, jira_key, summary, issue_type, priority, "
+        "jira_status, raw_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+        (id, jira_key, summary or None, issue_type or None, priority or None,
+         jira_status or None, raw_json or None),
+    )
+    await db.commit()
+
+
+async def list_pending_imports(db: aiosqlite.Connection, status: str = "pending") -> list[dict]:
+    async with db.execute(
+        "SELECT * FROM jira_pending_import WHERE status = ? ORDER BY created_at ASC",
+        (status,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def get_pending_import(db: aiosqlite.Connection, import_id: str) -> Optional[dict]:
+    async with db.execute(
+        "SELECT * FROM jira_pending_import WHERE id = ?", (import_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def set_pending_import_decided(db: aiosqlite.Connection, *, import_id: str,
+                                      status: str, project_id: str = "",
+                                      task_id: str = "") -> None:
+    await db.execute(
+        "UPDATE jira_pending_import SET status = ?, project_id = ?, task_id = ?, "
+        "decided_at = unixepoch('now', 'subsec') WHERE id = ?",
+        (status, project_id or None, task_id or None, import_id),
+    )
+    await db.commit()

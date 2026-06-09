@@ -11,6 +11,10 @@ from slate.db.queries import (
     update_task_jira_key, list_jira_sync_log,
 )
 from slate.jira.sync import sync_all
+from slate.jira.importer import (
+    stage_assigned_issues, approve_import, reject_import, DEFAULT_JQL,
+)
+from slate.db.queries import list_pending_imports
 
 app = typer.Typer(help="Jira integration")
 console = Console(legacy_windows=False)
@@ -43,6 +47,107 @@ def configure(
         console.print(f"  URL:   {base_url}")
         console.print(f"  Email: {email}")
     asyncio.run(_run())
+
+
+@app.command("import")
+def import_cmd(
+    jql: str = typer.Option(DEFAULT_JQL, "--jql", help="JQL to select issues"),
+):
+    """Stage Jira issues assigned to you for approval (creates NO tasks).
+
+    Review the queue with `slate jira imports`, then approve each with
+    `slate jira import-approve <id> --project <id>`.
+    """
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            result = await stage_assigned_issues(db, jql=jql)
+        if result.get("skipped"):
+            console.print(f"[yellow]Skipped:[/] {result.get('reason')}")
+            return
+        console.print(
+            f"[green]Staged {result['staged_count']}[/] new issue(s) "
+            f"from {result['fetched']} fetched. Review: [bold]slate jira imports[/]"
+        )
+        for key in result.get("staged", []):
+            console.print(f"  + {key}")
+    asyncio.run(_run())
+
+
+@app.command("imports")
+def imports_cmd(
+    status: str = typer.Option("pending", "--status", help="pending|imported|rejected"),
+):
+    """List staged Jira imports awaiting (or past) your decision."""
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            rows = await list_pending_imports(db, status=status)
+        if not rows:
+            console.print(f"[dim]No {status} imports.[/]")
+            return
+        table = Table("Import ID", "Jira", "Type", "Priority", "Status", "Summary")
+        for r in rows:
+            table.add_row(r["id"][:8], r["jira_key"], r.get("issue_type") or "-",
+                          r.get("priority") or "-", r.get("jira_status") or "-",
+                          (r.get("summary") or "")[:50])
+        console.print(table)
+    asyncio.run(_run())
+
+
+@app.command("import-approve")
+def import_approve_cmd(
+    import_id: str = typer.Argument(..., help="Import ID (or 8-char prefix) from `slate jira imports`"),
+    project: str = typer.Option(..., "--project", "-p", help="Target Slate project ID/key"),
+    assign: str = typer.Option("", "--assign", "-a", help="Assignee for the new task"),
+):
+    """Approve a staged issue → create the linked Slate task in the chosen project."""
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            full_id = await _resolve_import_id(db, import_id)
+            if not full_id:
+                console.print(f"[red]No pending import matching {import_id}[/]")
+                raise typer.Exit(1)
+            result = await approve_import(db, full_id, project_id=project, assigned_to=assign)
+        if result.get("error"):
+            console.print(f"[red]{result['error']}[/]")
+            raise typer.Exit(1)
+        msg = f"[green]Imported[/] {result['jira_key']} → task {result['task_id'][:8]}"
+        if result.get("obsidian"):
+            msg += f"\n  Obsidian: {result['obsidian']}"
+        console.print(msg)
+    asyncio.run(_run())
+
+
+@app.command("import-reject")
+def import_reject_cmd(
+    import_id: str = typer.Argument(...),
+):
+    """Reject a staged issue (it won't be re-staged unless it changes)."""
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            full_id = await _resolve_import_id(db, import_id)
+            if not full_id:
+                console.print(f"[red]No pending import matching {import_id}[/]")
+                raise typer.Exit(1)
+            result = await reject_import(db, full_id)
+        console.print(f"[yellow]Rejected[/] {result.get('jira_key', import_id)}")
+    asyncio.run(_run())
+
+
+async def _resolve_import_id(db, prefix: str) -> str | None:
+    """Allow passing an 8-char prefix from the `imports` table."""
+    rows = await list_pending_imports(db, status="pending")
+    for r in rows:
+        if r["id"] == prefix or r["id"].startswith(prefix):
+            return r["id"]
+    return None
 
 
 @app.command("sync")

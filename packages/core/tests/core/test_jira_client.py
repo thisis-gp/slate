@@ -74,8 +74,12 @@ async def test_add_worklog_sends_correct_fields():
             started="2026-05-28T09:00:00.000+0000",
         )
     payload = mock_post.call_args[1]["json"]
+    call_url = mock_post.call_args[0][0]
+    assert call_url.endswith("/rest/api/3/issue/PROJ-42/worklog")
     assert payload["timeSpentSeconds"] == 3600
     assert payload["started"] == "2026-05-28T09:00:00.000+0000"
+    assert payload["comment"]["type"] == "doc"
+    assert payload["comment"]["version"] == 1
     assert "fixed auth bug" in json.dumps(payload["comment"])
 
 

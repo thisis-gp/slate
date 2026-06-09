@@ -7,7 +7,7 @@ from rich.panel import Panel
 import aiosqlite
 from pathlib import Path
 from slate.db.schema import apply_schema
-from slate.db.queries import insert_task, list_tasks, get_task_context, update_task_state
+from slate.db.queries import insert_task, list_tasks, get_task_context, update_task_state, add_comment
 
 app = typer.Typer(help="Manage tasks")
 console = Console(legacy_windows=False)
@@ -136,6 +136,76 @@ def show_task(task_id: str = typer.Argument(...)):
             console.print("\n[bold]Comments:[/]")
             for c in ctx["comments"]:
                 console.print(f"  [{c['author_type']}] {c['author']}: {c['body']}")
+    asyncio.run(_run())
+
+@app.command("heartbeat")
+def heartbeat_task(
+    task_id: str = typer.Argument(...),
+    progress: str = typer.Argument(..., help="Short progress note, e.g. 'wired up the parser, tests next'"),
+    by: str = typer.Option("human", "--by", "-b", help="Agent name"),
+):
+    """Post a lightweight progress heartbeat. Other agents picking up the task
+    see the latest one in `slate task context`."""
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            await add_comment(db, task_id=task_id, author=by,
+                              body=progress, author_type="agent", kind="heartbeat")
+            console.print(f"[green]Heartbeat[/] logged for {task_id[:8]}")
+    asyncio.run(_run())
+
+@app.command("context")
+def context_task(
+    task_id: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON for agent consumption"),
+):
+    """The brief an agent should read before starting: state, decisions, latest
+    progress, and recent worklogs/comments — the shared memory for this task."""
+    async def _run():
+        async with aiosqlite.connect(_db_path()) as db:
+            db.row_factory = aiosqlite.Row
+            await apply_schema(db)
+            ctx = await get_task_context(db, task_id)
+        task = ctx["task"]
+        if not task:
+            console.print("[red]Task not found[/]")
+            raise typer.Exit(1)
+        if as_json:
+            console.print_json(json.dumps(ctx, default=str))
+            return
+        jira_key = task.get("jira_issue_key") or "-"
+        header = (
+            f"[bold]{task['title']}[/]\n"
+            f"Jira: [cyan]{jira_key}[/]  State: [yellow]{task['state']}[/]  "
+            f"Priority: {task['priority']}  Assignee: {task.get('assigned_to') or '-'}"
+        )
+        if task.get("description"):
+            header += f"\n\n{task['description']}"
+        console.print(Panel(header, title="Task Brief"))
+
+        decisions = ctx.get("decisions") or []
+        if decisions:
+            console.print("\n[bold magenta]Decisions:[/]")
+            for d in decisions:
+                console.print(f"  • {d['body']}  [dim](— {d['author']})[/]")
+
+        hb = ctx.get("latest_heartbeat")
+        if hb:
+            console.print(f"\n[bold]Latest progress:[/] {hb['body']}  [dim](— {hb['author']})[/]")
+
+        worklogs = ctx.get("worklogs") or []
+        if worklogs:
+            console.print("\n[bold]Recent work:[/]")
+            for w in worklogs[-8:]:
+                mins = w.get("time_spent_seconds", 0) // 60
+                console.print(f"  • {w['summary'][:90]} ({mins}m)")
+
+        notes = ctx.get("notes") or []
+        if notes:
+            console.print("\n[bold]Notes:[/]")
+            for c in notes[-8:]:
+                console.print(f"  • {c['body'][:100]}  [dim](— {c['author']})[/]")
     asyncio.run(_run())
 
 @app.command("move")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import uuid
 import aiosqlite
@@ -7,12 +8,43 @@ from slate.jira.mapping import (
     resolve_state_map, find_transition_id, format_worklog_started, is_allowed_jira_key,
 )
 from slate.llm.summarize import summarize_worklog
+from slate.jira.scrub import scrub_identity
 from slate.db.queries import (
     get_jira_config, list_tasks_with_jira, insert_jira_sync_log, get_unsynced_runs,
     get_unsynced_worklogs, mark_worklog_synced, insert_notification,
     insert_pending_sync, get_pending, set_pending_status, count_unlinked_worklogs,
+    get_unsynced_worklogs_by_ids,
 )
 from collections import defaultdict
+
+SUMMARY_TIMEOUT_SECONDS = 8
+
+
+def _fallback_summary(entries: list[str]) -> str:
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in entries:
+        entry = entry.strip()
+        if entry and entry not in seen:
+            seen.add(entry)
+            out.append(f"- {entry}")
+    return "\n".join(out[:12])
+
+
+def _worklog_entries(worklogs: list[dict]) -> list[str]:
+    """Collect de-duplicated worklog summaries, scrubbed of agent/tool identity.
+
+    Scrubbing happens here so BOTH the LLM input and the deterministic fallback
+    work from clean text — no banned identity token can reach Jira on any path.
+    """
+    entries: list[str] = []
+    seen: set[str] = set()
+    for worklog in worklogs:
+        summary = scrub_identity((worklog.get("summary") or "").strip())
+        if summary and summary not in seen:
+            seen.add(summary)
+            entries.append(summary)
+    return entries
 
 
 async def sync_all(db: aiosqlite.Connection) -> dict:
@@ -76,7 +108,7 @@ async def _sync_worklogs_legacy(db, client: JiraClient, task_id: str, jira_key: 
         started_ts = run.get("started_at") or run.get("completed_at") or 0.0
         ended_ts = run.get("completed_at") or started_ts
         time_spent = max(60, int(ended_ts - started_ts))
-        comment = f"[{run['tool']}] {run['agent_name']}: {run['summary'][:500]}"
+        comment = scrub_identity(run["summary"])[:500]
         try:
             await client.add_worklog(jira_key, time_spent_seconds=time_spent,
                                       comment=comment,
@@ -120,10 +152,8 @@ async def sync_worklogs_all(db: aiosqlite.Connection) -> dict:
         total_seconds = sum(w["time_spent_seconds"] for w in items)
         total_mins = total_seconds // 60
 
-        summaries = []
-        for w in items:
-            summaries.append(f"[{w['tool']}] {w['agent_name']}: {w['summary']}")
-        combined_summary = "\n".join(summaries[:10])
+        summaries = _worklog_entries(items)
+        combined_summary = _fallback_summary(summaries)
         if len(summaries) > 10:
             combined_summary += f"\n... and {len(summaries) - 10} more entries"
 
@@ -173,8 +203,6 @@ async def build_batch(db: aiosqlite.Connection) -> dict:
     if not config or not config.get("enabled"):
         return {"issues": [], "skipped": True}
 
-    state_map = resolve_state_map(config.get("state_map"))
-
     tasks = await list_tasks_with_jira(db)
     by_key_task: dict[str, dict] = {}
     for t in tasks:
@@ -197,12 +225,11 @@ async def build_batch(db: aiosqlite.Connection) -> dict:
         task = by_key_task.get(jira_key, {})
         current_state = task.get("state")
         total_seconds = sum(w["time_spent_seconds"] for w in items)
-        entries = [f"[{w['tool']}] {w['agent_name']}: {w['summary']}" for w in items]
+        entries = _worklog_entries(items)
         issues.append({
             "jira_key": jira_key,
             "task_id": task.get("id"),
             "current_state": current_state,
-            "target_status": state_map.get(current_state) if current_state else None,
             "worklog_ids": [w["id"] for w in items],
             "entries": entries,
             "total_seconds": total_seconds,
@@ -219,9 +246,13 @@ async def summarize_batch(batch: dict) -> tuple[dict, str]:
         entries = issue.get("entries") or []
         if not entries:
             continue
-        summary, provider = await summarize_worklog(
-            issue["jira_key"], entries, issue["total_seconds"] // 60
-        )
+        try:
+            summary, provider = await asyncio.wait_for(
+                summarize_worklog(issue["jira_key"], entries, issue["total_seconds"] // 60),
+                timeout=SUMMARY_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            summary, provider = _fallback_summary(entries), "concat_timeout"
         issue["summary"] = summary
         issue["summary_provider"] = provider
         if overall_provider == "concat" and provider != "concat":
@@ -287,44 +318,46 @@ async def approve_pending(
         jira_key = issue["jira_key"]
         task_id = issue.get("task_id")
         if jira_key in exclude:
+            for wid in issue.get("worklog_ids", []):
+                await mark_worklog_synced(db, wid, f"excluded:{pending_id}")
+            await insert_jira_sync_log(
+                db, task_id=task_id, jira_key=jira_key,
+                action="worklog", status="excluded",
+                detail=f"{len(issue.get('worklog_ids', []))} entries excluded by approval",
+            )
             results.append({"jira_key": jira_key, "status": "excluded"})
             continue
         result: dict = {"jira_key": jira_key}
         try:
-            target_status = issue.get("target_status")
-            if target_status:
-                transitions = await client.get_transitions(jira_key)
-                tid = find_transition_id(transitions, target_status)
-                if tid:
-                    await client.transition_issue(jira_key, tid)
-                    await insert_jira_sync_log(
-                        db, task_id=task_id, jira_key=jira_key,
-                        action="transition", status="ok",
-                        detail=f"Transitioned to '{target_status}'",
-                    )
-                    result["transition"] = target_status
-                else:
-                    available = [t["to"]["name"] for t in transitions]
-                    await insert_jira_sync_log(
-                        db, task_id=task_id, jira_key=jira_key,
-                        action="transition", status="approval_needed",
-                        detail=f"Transition to '{target_status}' not available. Available: {available}",
-                    )
-                    result["transition"] = f"unavailable:{target_status}"
-
-            entries = issue.get("entries") or []
+            fresh_items = await get_unsynced_worklogs_by_ids(db, issue.get("worklog_ids", []))
+            entries = _worklog_entries(fresh_items)
+            if not entries:
+                await insert_jira_sync_log(
+                    db, task_id=task_id, jira_key=jira_key,
+                    action="worklog", status="skipped",
+                    detail="All entries were already synced before approval",
+                )
+                result["status"] = "skipped"
+                result["reason"] = "already synced"
+                results.append(result)
+                continue
             if entries:
-                total_seconds = issue["total_seconds"]
+                total_seconds = sum(w["time_spent_seconds"] for w in fresh_items)
                 total_mins = total_seconds // 60
+                comment = (
+                    issue.get("summary") or ""
+                    if len(fresh_items) == len(issue.get("worklog_ids", []))
+                    else _fallback_summary(entries)
+                )
                 jira_result = await client.add_worklog(
                     jira_key,
                     time_spent_seconds=max(60, total_seconds),
-                    comment=issue.get("summary") or "",
-                    started=format_worklog_started(issue["started_ts"]),
+                    comment=comment,
+                    started=format_worklog_started(min(w["started_at"] for w in fresh_items)),
                 )
                 jira_wid = jira_result.get("id", "")
-                for wid in issue.get("worklog_ids", []):
-                    await mark_worklog_synced(db, wid, jira_wid)
+                for w in fresh_items:
+                    await mark_worklog_synced(db, w["id"], jira_wid)
                 await insert_jira_sync_log(
                     db, task_id=task_id, jira_key=jira_key,
                     action="worklog", status="ok",
@@ -345,9 +378,47 @@ async def approve_pending(
         results.append(result)
 
     await set_pending_status(db, pending_id, "pushed", result_json=json.dumps(results))
+    await _supersede_overlapping_pending_batches(db, pending_id, batch)
     return {"pushed": pushed, "failed": failed, "results": results}
 
 
 async def reject_pending(db: aiosqlite.Connection, pending_id: str) -> dict:
     await set_pending_status(db, pending_id, "rejected")
     return {"rejected": True}
+
+
+async def _supersede_overlapping_pending_batches(
+    db: aiosqlite.Connection, approved_pending_id: str, approved_batch: dict,
+) -> None:
+    approved_worklog_ids = {
+        wid
+        for issue in approved_batch.get("issues", [])
+        for wid in issue.get("worklog_ids", [])
+    }
+    if not approved_worklog_ids:
+        return
+
+    async with db.execute(
+        "SELECT id, batch_json FROM jira_pending_sync "
+        "WHERE status = 'pending' AND id <> ?",
+        (approved_pending_id,),
+    ) as cur:
+        pending_rows = [dict(row) async for row in cur]
+
+    for row in pending_rows:
+        try:
+            batch = json.loads(row["batch_json"])
+        except Exception:  # noqa: BLE001
+            continue
+        row_worklog_ids = {
+            wid
+            for issue in batch.get("issues", [])
+            for wid in issue.get("worklog_ids", [])
+        }
+        if approved_worklog_ids & row_worklog_ids:
+            await set_pending_status(
+                db,
+                row["id"],
+                "superseded",
+                result_json=json.dumps({"superseded_by": approved_pending_id}),
+            )
