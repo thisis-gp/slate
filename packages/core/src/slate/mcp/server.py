@@ -107,7 +107,26 @@ async def list_tools() -> list[types.Tool]:
                              "task_id": {"type": "string"},
                              "author": {"type": "string"},
                              "body": {"type": "string"},
-                             "author_type": {"type": "string", "enum": ["agent", "human"]}}}
+                             "author_type": {"type": "string", "enum": ["agent", "human"]},
+                             "kind": {"type": "string", "enum": ["note", "decision", "heartbeat"]}}}
+        ),
+        types.Tool(
+            name="record_decision",
+            description="Record a decision + rationale on a task so the next agent sees WHY, not just what",
+            inputSchema={"type": "object", "required": ["task_id", "author", "body"],
+                         "properties": {
+                             "task_id": {"type": "string"},
+                             "author": {"type": "string"},
+                             "body": {"type": "string", "description": "The decision and its rationale"}}}
+        ),
+        types.Tool(
+            name="heartbeat",
+            description="Post a short progress update on a task, visible to other agents picking it up",
+            inputSchema={"type": "object", "required": ["task_id", "author", "body"],
+                         "properties": {
+                             "task_id": {"type": "string"},
+                             "author": {"type": "string"},
+                             "body": {"type": "string", "description": "Short progress note"}}}
         ),
         types.Tool(
             name="daily_sync",
@@ -137,6 +156,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             result = await tools.list_tasks_tool(db, **arguments)
         elif name == "add_comment":
             result = await tools.add_comment_tool(db, **arguments)
+        elif name == "record_decision":
+            result = await tools.record_decision_tool(db, **arguments)
+        elif name == "heartbeat":
+            result = await tools.heartbeat_tool(db, **arguments)
         elif name == "daily_sync":
             result = await tools.daily_sync_tool(db, **arguments)
         else:

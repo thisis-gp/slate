@@ -42,6 +42,8 @@ async def create_worklog(body: CreateWorklogRequest, request: Request):
         tool=body.tool, summary=body.summary,
         time_spent_seconds=body.time_spent_seconds,
     )
+    from slate.obsidian.auto import refresh_doc_for_task
+    await refresh_doc_for_task(request.app.state.db, body.task_id)
     return {"id": wid, **body.model_dump()}
 
 

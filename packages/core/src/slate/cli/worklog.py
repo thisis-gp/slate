@@ -53,6 +53,8 @@ def add_worklog(
                 agent_name=agent, tool=tool, summary=summary,
                 time_spent_seconds=seconds,
             )
+            from slate.obsidian.auto import refresh_doc_for_task
+            await refresh_doc_for_task(db, task_id)
             mins = seconds // 60
             jira_note = ""
             if task.get("jira_issue_key"):

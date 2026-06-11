@@ -69,14 +69,37 @@ Always log costs when possible:
 slate run log <task-id> "Summary" --cost 0.05
 ```
 
+### Shared memory — read before you start, write as you go
+
+Slate is shared across all your tools (Claude Code, Codex, Cursor, Kimi, Hermes).
+Treat it as the team's memory for a task, not just a tracker.
+
+```bash
+# BEFORE starting: read the brief — prior decisions, latest progress, recent work,
+# and the issue's Obsidian doc (freeform notes from whoever worked it last).
+slate task context <task-id>            # human-readable
+slate task context <task-id> --json     # for agent consumption (incl. obsidian_notes)
+
+# WHILE working: leave a heartbeat so the next agent sees where you are.
+slate task heartbeat <task-id> "wired the parser; tests next" --by <your-name>
+
+# WHEN you make a non-trivial call: record the decision AND the why.
+slate comment decision <task-id> "Chose SQLite over Postgres — single-file, no ops" --by <your-name>
+```
+
+Every worklog, decision, heartbeat, and state change auto-refreshes the issue's
+Obsidian doc, so the vault always mirrors current state. (MCP equivalents:
+`get_task_context`, `heartbeat`, `record_decision` — but use the CLI for tracking.)
+
 ### Daily Workflow
 
 1. Check assigned tasks: `slate task list --assign <your-name>`
-2. Pick a task and move to `implementing`
-3. Do the work
-4. Add worklog: `slate worklog add <task-id> "What you did"`
-5. Move to next state when done
-6. At end of day, check: `slate sync daily`
+2. **Read the brief: `slate task context <task-id>`**
+3. Pick a task and move to `implementing`
+4. Do the work; **heartbeat progress and record decisions as you go**
+5. Add worklog: `slate worklog add <task-id> "What you did"`
+6. Move to next state when done
+7. At end of day, check: `slate sync daily`
 
 ### Important
 

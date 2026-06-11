@@ -31,6 +31,8 @@ def add_cmd(
             await apply_schema(db)
             await add_comment(db, task_id=task_id, author=by, body=body,
                               author_type=author_type, kind=kind)
+            from slate.obsidian.auto import refresh_doc_for_task
+            await refresh_doc_for_task(db, task_id)
             label = "Decision" if kind == "decision" else "Comment"
             console.print(f"[green]{label} added[/] to {task_id}")
     asyncio.run(_run())
@@ -53,6 +55,8 @@ def decision_cmd(
             await apply_schema(db)
             await add_comment(db, task_id=task_id, author=by, body=body,
                               author_type=author_type, kind="decision")
+            from slate.obsidian.auto import refresh_doc_for_task
+            await refresh_doc_for_task(db, task_id)
             console.print(f"[green]Decision recorded[/] on {task_id}")
     asyncio.run(_run())
 

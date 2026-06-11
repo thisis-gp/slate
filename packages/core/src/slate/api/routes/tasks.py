@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from slate.db.queries import insert_task, get_task, list_tasks, update_task_state, get_task_context, add_comment, list_comments
+from slate.obsidian.auto import refresh_doc_for_task, freeform_for_task
 
 router = APIRouter(tags=["tasks"])
 
@@ -33,6 +34,7 @@ class AddCommentRequest(BaseModel):
     author: str
     body: str
     author_type: str = "agent"
+    kind: str = "note"   # note | decision | heartbeat
 
 @router.post("/tasks", status_code=201)
 async def create_task(body: CreateTaskRequest, request: Request):
@@ -61,17 +63,22 @@ async def move_task(task_id: str, body: MoveTaskRequest, request: Request):
     await update_task_state(request.app.state.db, task_id=task_id,
                              to_state=body.to_state, changed_by=body.changed_by,
                              reason=body.reason, new_assignee=body.new_assignee)
+    await refresh_doc_for_task(request.app.state.db, task_id)
     return await get_task(request.app.state.db, task_id)
 
 @router.get("/tasks/{task_id}/context")
 async def task_context(task_id: str, request: Request):
-    return await get_task_context(request.app.state.db, task_id)
+    ctx = await get_task_context(request.app.state.db, task_id)
+    ctx["obsidian_notes"] = await freeform_for_task(request.app.state.db, task_id)
+    return ctx
 
 @router.post("/tasks/{task_id}/comments", status_code=201)
 async def create_comment(task_id: str, body: AddCommentRequest, request: Request):
-    return await add_comment(request.app.state.db, task_id=task_id,
-                              author=body.author, body=body.body,
-                              author_type=body.author_type)
+    comment = await add_comment(request.app.state.db, task_id=task_id,
+                                 author=body.author, body=body.body,
+                                 author_type=body.author_type, kind=body.kind)
+    await refresh_doc_for_task(request.app.state.db, task_id)
+    return comment
 
 @router.get("/tasks/{task_id}/comments")
 async def get_comments(task_id: str, request: Request):

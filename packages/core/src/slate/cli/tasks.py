@@ -152,6 +152,8 @@ def heartbeat_task(
             await apply_schema(db)
             await add_comment(db, task_id=task_id, author=by,
                               body=progress, author_type="agent", kind="heartbeat")
+            from slate.obsidian.auto import refresh_doc_for_task
+            await refresh_doc_for_task(db, task_id)
             console.print(f"[green]Heartbeat[/] logged for {task_id[:8]}")
     asyncio.run(_run())
 
@@ -167,11 +169,14 @@ def context_task(
             db.row_factory = aiosqlite.Row
             await apply_schema(db)
             ctx = await get_task_context(db, task_id)
+            from slate.obsidian.auto import freeform_for_task
+            freeform = await freeform_for_task(db, task_id)
         task = ctx["task"]
         if not task:
             console.print("[red]Task not found[/]")
             raise typer.Exit(1)
         if as_json:
+            ctx["obsidian_notes"] = freeform
             console.print_json(json.dumps(ctx, default=str))
             return
         jira_key = task.get("jira_issue_key") or "-"
@@ -206,6 +211,10 @@ def context_task(
             console.print("\n[bold]Notes:[/]")
             for c in notes[-8:]:
                 console.print(f"  • {c['body'][:100]}  [dim](— {c['author']})[/]")
+
+        if freeform:
+            console.print("\n[bold cyan]Obsidian notes:[/]")
+            console.print(freeform)
     asyncio.run(_run())
 
 @app.command("move")
@@ -222,6 +231,8 @@ def move_task(
             await apply_schema(db)
             await update_task_state(db, task_id=task_id, to_state=state,
                                     changed_by=by, reason=reason, new_assignee=assign)
+            from slate.obsidian.auto import refresh_doc_for_task
+            await refresh_doc_for_task(db, task_id)
             suffix = f" -> {assign}" if assign else ""
             console.print(f"[green]Moved[/] {task_id[:8]} -> [bold]{state}[/]{suffix}")
     asyncio.run(_run())

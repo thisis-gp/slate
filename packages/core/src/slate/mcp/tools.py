@@ -33,6 +33,7 @@ async def update_task_state(db: aiosqlite.Connection, *, task_id: str,
     await q.update_task_state(db, task_id=task_id, to_state=to_state,
                                changed_by=changed_by, reason=reason,
                                new_assignee=new_assignee)
+    await _refresh_obsidian(db, task_id)
     return await q.get_task(db, task_id)
 
 
@@ -67,6 +68,28 @@ async def daily_sync_tool(db: aiosqlite.Connection, date_str: str = "") -> dict:
 
 
 async def add_comment_tool(db: aiosqlite.Connection, *, task_id: str, author: str,
-                            body: str, author_type: str = "agent") -> dict:
-    return await q.add_comment(db, task_id=task_id, author=author,
-                                body=body, author_type=author_type)
+                            body: str, author_type: str = "agent",
+                            kind: str = "note") -> dict:
+    result = await q.add_comment(db, task_id=task_id, author=author,
+                                  body=body, author_type=author_type, kind=kind)
+    await _refresh_obsidian(db, task_id)
+    return result
+
+
+async def record_decision_tool(db: aiosqlite.Connection, *, task_id: str,
+                                author: str, body: str) -> dict:
+    """Record a decision + rationale on a task (shared memory for the next agent)."""
+    return await add_comment_tool(db, task_id=task_id, author=author,
+                                   body=body, author_type="agent", kind="decision")
+
+
+async def heartbeat_tool(db: aiosqlite.Connection, *, task_id: str,
+                          author: str, body: str) -> dict:
+    """Post a lightweight progress heartbeat visible to other agents."""
+    return await add_comment_tool(db, task_id=task_id, author=author,
+                                   body=body, author_type="agent", kind="heartbeat")
+
+
+async def _refresh_obsidian(db: aiosqlite.Connection, task_id: str) -> None:
+    from slate.obsidian.auto import refresh_doc_for_task
+    await refresh_doc_for_task(db, task_id)

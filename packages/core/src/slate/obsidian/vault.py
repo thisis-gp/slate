@@ -147,3 +147,24 @@ def read_issue_doc(
     if not path or not path.exists():
         return None
     return path.read_text(encoding="utf-8")
+
+
+def read_freeform(
+    jira_key: str, subfolder: str = "slate", *,
+    start: Optional[Path] = None, vault: Optional[Path] = None,
+) -> Optional[str]:
+    """Return only the human/agent-authored content (outside the managed block).
+
+    This is the part of the doc Slate does NOT generate — design notes, links,
+    scratch work an agent left for the next one. Returns None if there's no doc,
+    empty string if the doc has only the managed block + an empty Notes stub.
+    """
+    text = read_issue_doc(jira_key, subfolder, start=start, vault=vault)
+    if text is None:
+        return None
+    # Drop the managed block; keep everything else, minus the title heading.
+    stripped = _MANAGED_RE.sub("", text)
+    lines = [ln for ln in stripped.split("\n")]
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    return "\n".join(lines).strip()

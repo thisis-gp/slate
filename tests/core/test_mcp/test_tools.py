@@ -39,3 +39,16 @@ async def test_list_tasks_tool(db):
     await tools.create_task(db, project_id=p["id"], title="Task B")
     tasks = await tools.list_tasks_tool(db, project_id=p["id"])
     assert len(tasks) == 2
+
+@pytest.mark.asyncio
+async def test_decision_and_heartbeat_tools(db):
+    p = await tools.create_project(db, name="proj-ctx")
+    t = await tools.create_task(db, project_id=p["id"], title="Build feature")
+    await tools.record_decision_tool(db, task_id=t["id"], author="codex",
+                                      body="Chose SQLite over Postgres")
+    await tools.heartbeat_tool(db, task_id=t["id"], author="cursor",
+                               body="parser wired, tests next")
+    ctx = await tools.get_task_context(db, t["id"])
+    assert any(c["kind"] == "decision" for c in ctx["comments"])
+    assert ctx["latest_heartbeat"]["body"] == "parser wired, tests next"
+    assert len(ctx["decisions"]) == 1

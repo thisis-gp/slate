@@ -124,6 +124,38 @@ async def test_stale_claim_recovered_not_recent(db, staged):
     assert len(await list_worklogs(db, unsynced_only=True)) == 1
 
 
+async def test_claim_exclusive_across_two_connections(tmp_path):
+    """Cross-process guarantee: two separate aiosqlite connections to the same
+    file DB can't both claim the same worklog. SQLite serializes the writers."""
+    path = tmp_path / "dedup.sqlite"
+    async with aiosqlite.connect(path) as setup:
+        setup.row_factory = aiosqlite.Row
+        await apply_schema(setup)
+        pid = str(uuid.uuid4())
+        await insert_project(setup, id=pid, name="p")
+        tid = str(uuid.uuid4())
+        await insert_task(setup, id=tid, project_id=pid, title="t")
+        await update_task_jira_key(setup, task_id=tid, jira_key="BX-1")
+        wid = str(uuid.uuid4())
+        await insert_worklog(setup, id=wid, task_id=tid, agent_name="a",
+                             tool="cli", summary="x", time_spent_seconds=600)
+
+    conn_a = await aiosqlite.connect(path)
+    conn_b = await aiosqlite.connect(path)
+    conn_a.row_factory = aiosqlite.Row
+    conn_b.row_factory = aiosqlite.Row
+    try:
+        a, b = await asyncio.gather(
+            claim_worklogs_for_push(conn_a, [wid], "claiming:A"),
+            claim_worklogs_for_push(conn_b, [wid], "claiming:B"),
+        )
+        # Exactly one connection claims the row; the other gets nothing.
+        assert sorted([len(a), len(b)]) == [0, 1]
+    finally:
+        await conn_a.close()
+        await conn_b.close()
+
+
 async def test_successful_push_marks_synced_with_real_id(db, staged):
     _tid, pid = staged
     with patch.object(jira_sync.JiraClient, "add_worklog",
