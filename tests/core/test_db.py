@@ -13,7 +13,9 @@ async def test_schema_creates_all_tables():
     expected = {
         "projects", "tasks", "state_transitions", "sprints",
         "sessions", "agent_runs", "model_usage", "comments",
-        "jira_config", "jira_sync_log",
+        "jira_config", "jira_sync_log", "worklogs",
+        "notifications", "notification_rules", "jira_pending_sync",
+        "scheduler_state", "jira_pending_import",
     }
     assert expected == tables
 
@@ -68,4 +70,3 @@ async def test_get_task_context_includes_runs(db):
     assert ctx["task"]["title"] == "Research caching"
     assert len(ctx["runs"]) == 1
     assert ctx["runs"][0]["summary"] == "Researched Redis vs Memcached"
-

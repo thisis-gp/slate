@@ -52,6 +52,20 @@ async def test_upsert_and_get_jira_config(db):
     assert cfg["enabled"] == 1
 
 @pytest.mark.asyncio
+async def test_get_jira_config_prefers_env_credentials(db, monkeypatch):
+    await upsert_jira_config(db, base_url="https://old.atlassian.net",
+                              email="old@myorg.com", api_token="old-token",
+                              sync_time="11:00")
+    monkeypatch.setenv("JIRA_BASE_URL", "https://new.atlassian.net")
+    monkeypatch.setenv("JIRA_EMAIL", "new@myorg.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "new-token")
+    cfg = await get_jira_config(db)
+    assert cfg["base_url"] == "https://new.atlassian.net"
+    assert cfg["email"] == "new@myorg.com"
+    assert cfg["api_token"] == "new-token"
+    assert cfg["sync_time"] == "11:00"
+
+@pytest.mark.asyncio
 async def test_upsert_jira_config_is_idempotent(db):
     await upsert_jira_config(db, base_url="https://a.atlassian.net",
                               email="a@a.com", api_token="tok1")
