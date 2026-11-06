@@ -93,3 +93,6 @@ Enum (`models.py`): `todo, in_progress, on_hold, code_review, qa, ready_to_merge
 ## This repo's own task tracking
 
 Per the global agent rules, work on this repo is itself tracked in Slate and **every task must be linked to a `BX-<number>` Jira issue** before logging work. Use the `slate` CLI (never the MCP server for tracking). Ask the user for the BX number if you don't have it. See `AGENT_INSTRUCTIONS.md` for the per-task workflow.
+
+### Playbook
+- **Read `.agents/rules/opus-playbook.md`** — session-learned domain knowledge, debug patterns, and traps for this repo. Update it when you learn a new gotcha.

@@ -258,31 +258,25 @@ async def test_approval_supersedes_older_pending_batches_for_same_worklogs(db, s
 
 
 @pytest.mark.asyncio
-async def test_prepare_pending_falls_back_when_summary_times_out(db, setup, monkeypatch):
+async def test_prepare_pending_keeps_worklog_text_verbatim(db, setup):
+    """No LLM rewrite: Jira gets the owner's words, minus tool names and polls."""
     pid, tid = setup
-    await insert_worklog(
-        db,
-        id=str(uuid.uuid4()),
-        task_id=tid,
-        agent_name="codex",
-        tool="codex",
-        summary="Implemented the fix",
-        time_spent_seconds=1800,
-    )
-
-    async def slow_summary(*args, **kwargs):
-        await asyncio.sleep(1)
-        return "too slow", "slow"
-
-    monkeypatch.setattr(jira_sync, "SUMMARY_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(jira_sync, "summarize_worklog", slow_summary)
+    for summary in [
+        "Codex fixed the null org_entity_id crash in the ecard handler; added a regression test",
+        "Checked PR status and CI",
+    ]:
+        await insert_worklog(
+            db, id=str(uuid.uuid4()), task_id=tid, agent_name="codex",
+            tool="codex", summary=summary, time_spent_seconds=1800,
+        )
 
     pending = await prepare_pending(db)
 
     issue = pending["batch"]["issues"][0]
-    assert pending["pending_id"]
-    assert issue["summary_provider"] == "concat_timeout"
-    assert "Implemented the fix" in issue["summary"]
+    assert issue["summary_provider"] == "clean"
+    assert issue["summary"] == (
+        "Fixed the null org_entity_id crash in the ecard handler; added a regression test"
+    )
 
 
 @pytest.mark.asyncio

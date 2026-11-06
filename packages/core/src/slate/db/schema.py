@@ -122,6 +122,23 @@ CREATE TABLE IF NOT EXISTS worklogs (
     created_at    REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
 );
 
+-- Work timers: `slate timer start/stop`. Elapsed = (paused_at or now) -
+-- started_at - paused_seconds. One active timer per agent (index below).
+CREATE TABLE IF NOT EXISTS timers (
+    id             TEXT PRIMARY KEY,
+    task_id        TEXT NOT NULL REFERENCES tasks(id),
+    agent_name     TEXT NOT NULL,
+    tool           TEXT NOT NULL DEFAULT 'cli',
+    started_at     REAL NOT NULL,
+    paused_at      REAL,
+    paused_seconds REAL NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'running',
+    stopped_at     REAL,
+    worklog_id     TEXT REFERENCES worklogs(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_one_active
+    ON timers(agent_name) WHERE status IN ('running', 'paused');
+
 CREATE TABLE IF NOT EXISTS notifications (
     id          TEXT PRIMARY KEY,
     type        TEXT NOT NULL,

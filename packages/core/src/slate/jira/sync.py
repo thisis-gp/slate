@@ -7,8 +7,7 @@ from slate.jira.client import JiraClient
 from slate.jira.mapping import (
     resolve_state_map, find_transition_id, format_worklog_started, is_allowed_jira_key,
 )
-from slate.llm.summarize import summarize_worklog
-from slate.jira.scrub import scrub_identity
+from slate.jira.scrub import scrub_identity, format_jira_comment
 from slate.db.queries import (
     get_jira_config, list_tasks_with_jira, insert_jira_sync_log, get_unsynced_runs,
     get_unsynced_worklogs, mark_worklog_synced, insert_notification,
@@ -18,8 +17,6 @@ from slate.db.queries import (
 )
 from collections import defaultdict
 
-SUMMARY_TIMEOUT_SECONDS = 8
-
 # Serializes approval pushes within this process so two concurrent requests
 # (e.g. a UI double-click) can't both enter the push loop. Cross-process safety
 # is handled by the DB-atomic claim in ``claim_worklogs_for_push``.
@@ -27,14 +24,11 @@ _push_lock = asyncio.Lock()
 
 
 def _fallback_summary(entries: list[str]) -> str:
-    seen: set[str] = set()
-    out: list[str] = []
-    for entry in entries:
-        entry = entry.strip()
-        if entry and entry not in seen:
-            seen.add(entry)
-            out.append(f"- {entry}")
-    return "\n".join(out[:12])
+    """Jira comment for scrubbed entries: verbatim, trivial lines dropped.
+
+    Kept under this name because ``slate.cli.worklog`` imports it.
+    """
+    return format_jira_comment(entries)
 
 
 def _worklog_entries(worklogs: list[dict]) -> list[str]:
@@ -249,24 +243,19 @@ async def build_batch(db: aiosqlite.Connection) -> dict:
 
 
 async def summarize_batch(batch: dict) -> tuple[dict, str]:
-    """LLM-summarize each issue's worklog entries. Returns (batch, provider)."""
-    overall_provider = "concat"
+    """Build each issue's Jira comment. Returns (batch, provider).
+
+    No LLM: the worklog text goes to Jira as written, only scrubbed of tool
+    identity and stripped of trivial lines. A model rewrite changed what the
+    owner had said and was dropped on purpose (2026-11-06).
+    """
     for issue in batch.get("issues", []):
         entries = issue.get("entries") or []
         if not entries:
             continue
-        try:
-            summary, provider = await asyncio.wait_for(
-                summarize_worklog(issue["jira_key"], entries, issue["total_seconds"] // 60),
-                timeout=SUMMARY_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            summary, provider = _fallback_summary(entries), "concat_timeout"
-        issue["summary"] = summary
-        issue["summary_provider"] = provider
-        if overall_provider == "concat" and provider != "concat":
-            overall_provider = provider
-    return batch, overall_provider
+        issue["summary"] = _fallback_summary(entries)
+        issue["summary_provider"] = "clean"
+    return batch, "clean"
 
 
 async def prepare_pending(db: aiosqlite.Connection) -> dict:

@@ -478,6 +478,7 @@ async def insert_worklog(
     id: str, task_id: str, agent_run_id: str = "",
     agent_name: str, tool: str, summary: str,
     time_spent_seconds: int = 0,
+    started_at: Optional[float] = None,
 ) -> None:
     task = await get_task(db, task_id)
     full_task_id = task["id"] if task else task_id
@@ -487,7 +488,7 @@ async def insert_worklog(
         "time_spent_seconds, started_at, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (id, full_task_id, agent_run_id or None, agent_name, tool, summary,
-         max(60, time_spent_seconds), now, now),
+         max(60, time_spent_seconds), started_at or now, now),
     )
     await db.commit()
 

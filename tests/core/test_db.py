@@ -15,7 +15,7 @@ async def test_schema_creates_all_tables():
         "sessions", "agent_runs", "model_usage", "comments",
         "jira_config", "jira_sync_log", "worklogs",
         "notifications", "notification_rules", "jira_pending_sync",
-        "scheduler_state", "jira_pending_import",
+        "scheduler_state", "jira_pending_import", "timers",
     }
     assert expected == tables
 

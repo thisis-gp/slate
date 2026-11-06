@@ -13,6 +13,7 @@ from slate.db.queries import (
 from slate.jira.client import JiraClient
 from slate.jira.mapping import format_worklog_started
 from slate.jira.sync import _fallback_summary, _worklog_entries
+from slate.jira.scrub import worklog_problems, WORKLOG_FORMAT_HINT
 from slate.db.queries import get_jira_config, insert_jira_sync_log
 
 app = typer.Typer(help="Worklog tracking for Jira")
@@ -33,8 +34,15 @@ def add_worklog(
     tool: str = typer.Option("cli", "--tool", "-t", help="Tool used (claude-code, codex, cursor, etc)"),
     time_spent: int = typer.Option(0, "--time", help="Time spent in minutes (0 = auto from now)"),
     run_id: str = typer.Option("", "--run", help="Link to agent_run ID"),
+    force: bool = typer.Option(False, "--force", help="Skip the summary quality check"),
 ):
     """Add a worklog entry for a task. Used by agents to log their work."""
+    problems = [] if force else worklog_problems(summary)
+    if problems:
+        console.print("[red]Summary rejected:[/] " + "; ".join(problems))
+        console.print(f"[dim]{WORKLOG_FORMAT_HINT}[/]")
+        raise typer.Exit(1)
+
     async def _run():
         async with aiosqlite.connect(_db_path()) as db:
             db.row_factory = aiosqlite.Row

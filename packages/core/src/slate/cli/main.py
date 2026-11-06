@@ -11,6 +11,7 @@ from slate.cli.jira import app as jira_app
 from slate.cli.worklog import app as worklog_app
 from slate.cli.notify import app as notify_app
 from slate.cli.obsidian import app as obsidian_app
+from slate.cli.timer import app as timer_app
 
 app = typer.Typer(name="slate", help="Slate - Agentic Jira CLI", no_args_is_help=True)
 app.add_typer(projects_app, name="project")
@@ -24,6 +25,7 @@ app.add_typer(jira_app, name="jira")
 app.add_typer(worklog_app, name="worklog")
 app.add_typer(notify_app, name="notify")
 app.add_typer(obsidian_app, name="obsidian")
+app.add_typer(timer_app, name="timer")
 
 if __name__ == "__main__":
     app()
