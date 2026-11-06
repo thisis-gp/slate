@@ -44,24 +44,31 @@ class JiraClient:
 
     async def search_issues(self, jql: str, *, max_results: int = 100,
                             fields: list[str] | None = None) -> list[dict]:
-        """Search issues via JQL. Returns the raw issue dicts (key + fields)."""
+        """Search issues via JQL. Returns the raw issue dicts (key + fields).
+
+        Uses the enhanced search endpoint ``POST /rest/api/3/search/jql`` — the old
+        ``/rest/api/3/search`` was removed by Atlassian (returns 410 Gone). The new
+        endpoint paginates by opaque ``nextPageToken`` (no ``startAt``/``total``)
+        and signals the end with ``isLast``.
+        """
         flds = fields or ["summary", "status", "issuetype", "priority", "assignee"]
         issues: list[dict] = []
-        start_at = 0
+        next_token: str | None = None
         async with httpx.AsyncClient() as client:
             while True:
+                body: dict = {"jql": jql, "maxResults": max_results, "fields": flds}
+                if next_token:
+                    body["nextPageToken"] = next_token
                 r = await client.post(
-                    f"{self.base_url}/rest/api/3/search",
+                    f"{self.base_url}/rest/api/3/search/jql",
                     headers=self._headers("application/json"),
-                    json={"jql": jql, "startAt": start_at,
-                          "maxResults": max_results, "fields": flds},
+                    json=body,
                 )
                 r.raise_for_status()
                 data = r.json()
-                batch = data.get("issues", [])
-                issues.extend(batch)
-                start_at += len(batch)
-                if start_at >= data.get("total", 0) or not batch:
+                issues.extend(data.get("issues", []))
+                next_token = data.get("nextPageToken")
+                if data.get("isLast") or not next_token:
                     break
         return issues
 
