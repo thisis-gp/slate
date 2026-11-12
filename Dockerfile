@@ -19,10 +19,10 @@ COPY packages/core/pyproject.toml ./packages/core/pyproject.toml
 # Copy application source (the package is built during sync)
 COPY packages/core/src/ ./packages/core/src/
 
-# Root is a workspace project too: install every member, and keep uv run doing the same
-ENV UV_ALL_PACKAGES=1 PATH="/app/.venv/bin:$PATH"
+# Root is a workspace project too, so install all members explicitly
+ENV PATH="/app/.venv/bin:$PATH"
 # Install runtime deps only (no test/dev deps)
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --all-packages
 
 # Slate DB lives here (mounted as a volume in compose)
 RUN mkdir -p /root/.slate
