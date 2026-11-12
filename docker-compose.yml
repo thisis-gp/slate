@@ -5,7 +5,7 @@ services:
       target: api
     container_name: slate-api
     ports:
-      - "7331:8000"
+      - "127.0.0.1:${SLATE_API_PORT:-7331}:8000"
     volumes:
       - slate-data:/root/.slate
     restart: unless-stopped
@@ -23,7 +23,7 @@ services:
       target: ui
     container_name: slate-ui
     ports:
-      - "3000:80"
+      - "127.0.0.1:${SLATE_UI_PORT:-3000}:80"
     depends_on:
       slate-api:
         condition: service_healthy

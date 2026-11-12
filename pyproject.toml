@@ -1,3 +1,9 @@
+[project]
+name = "slate"
+version = "0.1.0"
+description = "Shared kanban board for AI agents"
+requires-python = ">=3.11"
+
 [tool.uv.workspace]
 members = ["packages/core"]
 
@@ -10,4 +16,4 @@ dev-dependencies = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "packages/core/tests"]

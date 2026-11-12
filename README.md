@@ -2,6 +2,8 @@
 
 Task tracking for agentic workflows. Slate gives AI agents a shared, persistent kanban board — a place to create tasks, log runs, track costs, and request human approval before taking risky actions.
 
+Early-stage (v0.1.0). Stack: Python 3.11, FastAPI, SQLite, a React + Vite UI, a Jira sync job and an MCP server.
+
 Built to work with Claude Code, Codex CLI, Cursor, and any other agent that can run shell commands or call an HTTP API.
 
 ---
@@ -134,11 +136,19 @@ Opens a kanban board at `http://localhost:5173` connected to the local API serve
 ## Docker
 
 ```bash
-docker-compose up
+docker compose up -d --build
 ```
 
-Runs the API server and UI together. API on port `7331`, UI on port `80`.
+Runs the API and the UI together. Both ports bind to `127.0.0.1` only: API on `7331`, UI on `3000` (override with `SLATE_API_PORT` and `SLATE_UI_PORT`). The UI container proxies `/api` to the API.
 
+Slate has no login. Do not expose it to the internet. On a remote host, reach it through an SSH tunnel (example for a host that maps the UI to `18080`):
+
+```bash
+ssh -N -L 18080:127.0.0.1:18080 <your-ssh-host>
+# then open http://localhost:18080
+```
+
+Tests: `uv sync --all-packages && uv run pytest`.
 ---
 
 ## Jira Integration
