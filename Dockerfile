@@ -16,11 +16,13 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/core/pyproject.toml ./packages/core/pyproject.toml
 
-# Install all runtime deps into .venv (no test/dev deps)
-RUN uv sync --frozen --no-dev
-
-# Copy application source
+# Copy application source (the package is built during sync)
 COPY packages/core/src/ ./packages/core/src/
+
+# Root is a workspace project too: install every member, and keep uv run doing the same
+ENV UV_ALL_PACKAGES=1 PATH="/app/.venv/bin:$PATH"
+# Install runtime deps only (no test/dev deps)
+RUN uv sync --frozen --no-dev
 
 # Slate DB lives here (mounted as a volume in compose)
 RUN mkdir -p /root/.slate
@@ -28,7 +30,7 @@ VOLUME /root/.slate
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "slate.api.app:create_app", \
+CMD ["uvicorn", "slate.api.app:create_app", \
      "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
 # ── Stage 3: nginx serving the React SPA ──────────────────────────────────────
