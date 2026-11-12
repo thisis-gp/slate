@@ -59,3 +59,23 @@ htmlcov/
 # OS
 Thumbs.db
 .DS_Store
+
+# Node / UI
+node_modules/
+packages/ui/dist/
+*.tsbuildinfo
+
+# Env
+.env.*
+!.env.example
+
+# Agent tooling and plans (never on origin)
+.claude/
+.cursor/
+.codex/
+.agents/
+docs/superpowers/
+
+# Local data
+*.db-journal
+.slate/*.sqlite
